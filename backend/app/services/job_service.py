@@ -459,7 +459,16 @@ def _refresh_running_steps(item: dict) -> bool:
     `running` forever. Returns True if the job item was mutated (caller
     should persist)."""
     changed = False
+    # Only steps already running when this pass began are eligible to
+    # complete here; a step the cascade starts mid-pass waits for the next
+    # refresh ("a later refresh completes it"). Completing it in the same
+    # pass would trip the persisted-state guard -- the DB doesn't know the
+    # step started yet -- and, with a step duration shorter than a refresh
+    # pass, livelock the refresh by repeatedly discarding its own work.
+    eligible = {s["step_id"] for s in item["steps"] if s["status"] == "running"}
     for step in item["steps"]:
+        if step["step_id"] not in eligible:
+            continue
         if step["status"] != "running" or not step.get("startedAt"):
             continue
         elapsed = _elapsed_seconds(step["startedAt"])

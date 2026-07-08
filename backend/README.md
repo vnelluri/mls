@@ -224,6 +224,28 @@ curl -s "http://localhost:8000/audit?page=1&pageSize=20" | jq '.items[].action'
 
 Full smoke test: `bash scripts/test-api.sh` (needs bash, curl, jq).
 
+## Tests
+
+```bash
+cd backend
+pytest            # ~70 tests, ~20s, no server or emulator process needed
+```
+
+The suite (`tests/`) runs DynamoDB **in-process** via moto's `mock_aws` —
+it does not use the moto *server* that `scripts/dev.py` starts, and needs no
+network or Docker. Timing is collapsed (`STEP_DURATION_SECONDS=0`, EMR mock
+phases 0) so each `GET /jobs/{id}` advances exactly one step and full
+pipeline runs take milliseconds. Roles are switched per test through the
+dev-auth identity, and the data-quality step is monkeypatched deterministic
+where a test needs a specific monitoring outcome (Passed / Rework / Failed).
+
+Coverage focuses on the behavior that encodes policy: the step cascade and
+its terminal states, EMR failure/timeout handling, approval + monitoring
+review closure, stage-transition and promotion gates, ESP trigger gates and
+idempotency, RBAC and cross-tenant isolation, tenant suspension, and the
+repository-level concurrency guarantees (optimistic locking, conditional
+creates, idempotent snapshots).
+
 ## Environment variables
 
 See `.env.example` for the complete annotated list. Highlights:
