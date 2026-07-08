@@ -1,0 +1,14 @@
+# Never let host state leak into the image build:
+# - node_modules: host-native binaries would overwrite the image's `npm ci`
+# - .env*: local values must not be baked into an environment's bundle
+#   (build args are the only configuration path)
+node_modules
+dist
+coverage
+.env
+.env.*
+.git
+.claude
+iac
+Dockerfile
+.dockerignore
