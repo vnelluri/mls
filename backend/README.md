@@ -403,18 +403,34 @@ See `.env.example` for the complete annotated list. Highlights:
 
 ## Deploying to ECS (Fargate)
 
-Provisioning is Terraform: **`iac/`** is a complete module — the 7 DynamoDB
-tables + GSIs, execution/task IAM roles (least-privilege on the tables;
-EMR Serverless permissions only when `emr_mode = "real"`), and the Fargate
-task definition + service. See `iac/README.md` for the usage example and
-variables.
+Provisioning is Terraform, two modules:
 
-1. Build & push the image (prod stage): `docker build --target prod -t mlserv-backend .` then tag/push to ECR.
-2. Create the SSM parameters for the Entra settings (`/mlserv/entra-*`) —
-   with `AUTH_MODE=prod` the app refuses to start unless they're set.
-3. `terraform apply` the `iac/` module with your image, subnets, security
-   groups, and ALB target group.
-4. Point the frontend at the ALB and set `cors_allowed_origins` accordingly.
+- **`../infra/data-plane/`** — the storage/compute the real execution modes
+  run on: the data/models/platform S3 buckets, one EMR Serverless
+  application + tenant-scoped job execution role **per tenant**, and the
+  Snowflake storage-integration role. Its outputs feed the backend module
+  and the per-tenant `PUT /tenants/{id}/execution` calls; its README has the
+  Snowflake handshake and the tenant onboarding runbook.
+- **`iac/`** — the app plane: the 7 DynamoDB tables + GSIs, execution/task
+  IAM roles (least-privilege on the tables; EMR Serverless job-run +
+  `iam:PassRole` permissions scoped to the data plane's per-tenant ARNs when
+  `emr_mode = "real"`), and the Fargate task definition + service. See
+  `iac/README.md` for the usage example and variables.
+
+1. `terraform apply` the data-plane module (`tenant_ids` = your tenants) and
+   upload `emr/scoring_entrypoint.py` to its `entrypoint_s3_uri` output.
+2. Build & push the image (prod stage): `docker build --target prod -t mlserv-backend .` then tag/push to ECR.
+3. Create the SSM parameters for the Entra settings (`/mlserv/entra-*`) and,
+   for `SNOWFLAKE_MODE=real`, the Snowflake service-account settings — with
+   `AUTH_MODE=prod` the app refuses to start unless they're set.
+4. `terraform apply` the `iac/` module with your image, subnets, security
+   groups, ALB target group, and the data-plane outputs
+   (`emr_application_arns`, `emr_execution_role_arns`, `dq_s3_read_arns`,
+   `EMR_ENTRYPOINT_S3_URI`).
+5. As PlatformAdmin, enter each tenant's execution config
+   (`PUT /tenants/{id}/execution`) from the data plane's `tenant_execution`
+   output.
+6. Point the frontend at the ALB and set `cors_allowed_origins` accordingly.
 
 The Dockerfile is **CI/deploy only** — local development never needs it.
 
