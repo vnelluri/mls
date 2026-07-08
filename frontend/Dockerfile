@@ -15,6 +15,13 @@
 
 # ---- build stage ----
 FROM node:20-alpine AS build
+WORKDIR /app
+
+# Installed before the VITE_* ARGs are declared so this layer's cache key
+# depends only on package.json/package-lock.json, not on per-environment
+# build-arg values — dev/stage/prod builds of the same commit reuse it.
+COPY package.json package-lock.json ./
+RUN npm ci
 
 ARG VITE_API_BASE_URL
 # Demo mode must never ship by accident: opt in explicitly for demo builds.
@@ -28,10 +35,11 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID \
     VITE_ENTRA_API_SCOPE=$VITE_ENTRA_API_SCOPE
 
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
+# Explicit allowlist (not `COPY . .`) so host-only files (.env, iac/, .claude/)
+# can never ride into the image regardless of .dockerignore upkeep.
+COPY index.html vite.config.ts tsconfig.json tsconfig.node.json tailwind.config.ts postcss.config.js ./
+COPY scripts ./scripts
+COPY src ./src
 RUN npm run build
 
 # ---- runtime stage ----
