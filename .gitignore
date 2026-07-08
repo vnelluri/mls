@@ -1,2 +1,10 @@
 # Machine-local Claude Code settings (per-user permissions) -- never shared.
 .claude/settings.local.json
+
+# Terraform working files -- state and providers never belong in the repo.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraform.lock.hcl

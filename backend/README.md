@@ -289,6 +289,11 @@ See `.env.example` for the complete annotated list. Highlights:
 
 ## Deploying to ECS (Fargate)
 
+> Prefer Terraform? `iac/` is a complete module (tables + IAM + ECS service)
+> covering steps 1, 3 and 4 below — see `iac/README.md`. Use **either** the
+> Terraform module **or** the CloudFormation/JSON files here, never both
+> (they create identically named resources).
+
 1. Create tables: `aws cloudformation deploy --template-file infrastructure/dynamodb-tables.cf.yaml --stack-name mlserv-dynamodb`
 2. Build & push the image (prod stage): `docker build --target prod -t mlserv-backend .` then tag/push to ECR.
 3. Edit `infrastructure/ecs-task-def.json` (account ID, roles, SSM parameter ARNs for the Entra settings) and register: `aws ecs register-task-definition --cli-input-json file://infrastructure/ecs-task-def.json`
