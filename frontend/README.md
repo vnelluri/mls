@@ -207,9 +207,18 @@ Once both are up:
 ## Docker (CI/deploy only — not used locally)
 
 ```bash
-docker build -t ml-serving-monitoring-frontend .
+docker build \
+  --build-arg VITE_API_BASE_URL=https://api.mlserv.example.com \
+  --build-arg VITE_ENTRA_TENANT_ID=<tenant-guid> \
+  --build-arg VITE_ENTRA_CLIENT_ID=<spa-client-id> \
+  --build-arg VITE_ENTRA_API_SCOPE=api://<api-client-id>/.default \
+  -t ml-serving-monitoring-frontend .
 docker run -p 8080:80 ml-serving-monitoring-frontend
 ```
+
+The `--build-arg` values above are baked into the JS bundle at build time (see
+"Environment variables" above) — omitting them ships an image whose API calls
+fall back to `http://localhost:8000` and whose MSAL config has no client ID.
 
 Multi-stage build: `node:20-alpine` builds the static bundle, `nginx:alpine` serves it on port 80
 with SPA-fallback routing (`nginx.conf`). Port 80 was chosen (rather than 3000) to match a typical
@@ -221,8 +230,18 @@ Provisioning is Terraform: **`iac/`** is a complete module (log group, task
 definition with the port-80 health check, Fargate service with optional ALB
 attachment) — see `iac/README.md` for usage.
 
-1. Build and push the image to ECR: `docker build -t <ecr-repo>:<tag> . && docker push <ecr-repo>:<tag>`.
-   Remember `VITE_*` config (API base URL, Entra client id) is baked in at build time.
+1. Build and push the image to ECR, passing the target environment's `VITE_*` config as
+   `--build-arg` flags (baked into the bundle at build time — see "Docker" above for the full
+   flag list):
+   ```bash
+   docker build \
+     --build-arg VITE_API_BASE_URL=https://api.mlserv.example.com \
+     --build-arg VITE_ENTRA_TENANT_ID=<tenant-guid> \
+     --build-arg VITE_ENTRA_CLIENT_ID=<spa-client-id> \
+     --build-arg VITE_ENTRA_API_SCOPE=api://<api-client-id>/.default \
+     -t <ecr-repo>:<tag> .
+   docker push <ecr-repo>:<tag>
+   ```
 2. `terraform apply` the `iac/` module with your image, subnets, security groups,
    and target group (reuse the backend's ECS cluster via its `cluster_arn` output).
 3. Point an ALB target group at container port 80; health check path `/`.
