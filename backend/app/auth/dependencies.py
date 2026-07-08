@@ -74,7 +74,12 @@ def get_current_user(
     if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No mlserv role is mapped for your Entra group membership",
+            detail=(
+                "No platform role could be resolved from your Entra group "
+                f"membership — expected a '{settings.GROUP_NAME_PREFIX}-platform-<role>' / "
+                f"'{settings.GROUP_NAME_PREFIX}-<tenant>-<role>' group or a "
+                "group-mapping entry"
+            ),
         )
     role, tenant_id, _display_name = resolved
 

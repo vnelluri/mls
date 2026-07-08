@@ -65,8 +65,33 @@ Seeded demo tenants: `acme-capital`, `blue-harbor-bank` (plus a suspended
 `old-north-trust`). Default dev identity: **LeadDataScientist @ acme-capital**.
 
 In prod (`AUTH_MODE=prod`), identity comes from an Entra ID JWT and the
-role/tenant are resolved **fresh on every request** from the
-`mlserv-group-mappings` table — never cached, never trusted from raw claims.
+role/tenant are resolved **fresh on every request** — never cached. The
+primary path is the **group-name convention**: the org's `tms-*` security
+groups are AD-synced, so the token's `groups` claim carries their
+`sAMAccountName` names (set the app registration's optional claim to emit
+sAMAccountName, and emit only "groups assigned to the application" to stay
+clear of the 200-group overage limit). Names resolve by parsing alone:
+
+| Group name | Resolves to |
+|---|---|
+| `tms-platform-admin` | PlatformAdmin (tenantless) |
+| `tms-platform-operator` | Operator (tenantless) |
+| `tms-<tenant>-leaddatascientist` | LeadDataScientist @ `<tenant>` |
+| `tms-<tenant>-datascientist` | DataScientist @ `<tenant>` |
+
+The tenant slug in the group name must equal the platform `tenant_id`
+exactly — that equality is the tenant-onboarding contract (creating the Entra
+group *is* the role grant; no mapping-table seeding, no bootstrap problem).
+Matching is case-insensitive, `DOMAIN\` qualifiers are stripped, the prefix
+is configurable via `GROUP_NAME_PREFIX`, and a user in several groups gets
+the highest-privilege match. Because resolution reads the token's claims,
+a group-membership change takes effect at the next token refresh (≤ ~90 min)
+rather than instantly — the price of claim-based resolution.
+
+The `mlserv-group-mappings` table remains as the fallback for anything that
+doesn't parse (group object IDs, non-convention groups) and is **required for
+service principals**: app-only tokens carry no groups claim, so the ESP
+scheduler is mapped by client ID through it (see below).
 The service **refuses to start** in prod mode unless `ENTRA_JWKS_URL`,
 `ENTRA_ISSUER` and an audience (`ENTRA_AUDIENCE` or `ENTRA_CLIENT_ID`) are
 set — a blank value would silently disable that verification. Entra signing-key
@@ -83,7 +108,7 @@ Every list endpoint returns `{"items": [...], "total": n, "page": n, "pageSize":
 | `GET /auth/me` | any mapped role | current user `{user_id, email, name, role, tenant_id}` |
 | `POST /tenants`, `PATCH /tenants/{id}/suspend`, `.../reactivate` | PlatformAdmin | audit rows written under partition `PLATFORM` |
 | `GET /tenants`, `GET /tenants/{id}` | PlatformAdmin | admin console |
-| `POST/GET/DELETE /group-mappings` | PlatformAdmin | Entra group → role/tenant mappings |
+| `POST/GET/DELETE /group-mappings` | PlatformAdmin | Entra group → role/tenant mappings (fallback only: convention-named `tms-*` groups resolve by name; the table covers service principals and exceptions) |
 | `POST /pipelines` | LeadDataScientist (own tenant) | steps validated as a discriminated union on `type` |
 | `GET /pipelines`, `GET /pipelines/{id}` | any role (admin sees all tenants) | admin detail lookups pass `?tenant_id=` |
 | `PATCH /pipelines/{id}` | LeadDataScientist | bumps `version` |
@@ -298,6 +323,7 @@ See `.env.example` for the complete annotated list. Highlights:
 | Var | Default | Purpose |
 |---|---|---|
 | `AUTH_MODE` | `dev` | `dev` = synthetic user; `prod` = Entra JWT validation |
+| `GROUP_NAME_PREFIX` | `tms` | prefix of the convention group names (`<prefix>-platform-<role>`, `<prefix>-<tenant>-<role>`) |
 | `DEV_USER_ROLE` / `DEV_USER_TENANT_ID` | `LeadDataScientist` / `acme-capital` | local identity (restart to apply) |
 | `DDB_ENDPOINT_URL` | `http://localhost:5000` | moto in dev; leave empty for real AWS |
 | `EMR_MODE` / `SNOWFLAKE_MODE` / `DQ_MODE` | `mock` | in-process simulations; `real` = EMR Serverless / live Snowflake unloads / S3-parquet DQ engine (see "Real execution modes") |

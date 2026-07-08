@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     DEV_USER_ROLE: str = "LeadDataScientist"  # PlatformAdmin | LeadDataScientist | DataScientist
     DEV_USER_TENANT_ID: Optional[str] = "acme-capital"
 
+    # Convention-based group resolution (prod path): Entra groups named
+    # "<prefix>-platform-<role>" / "<prefix>-<tenant>-<role>" resolve to a
+    # role/tenant by name alone, no mapping-table entry needed. Requires the
+    # groups claim to carry NAMES — i.e. AD-synced groups with the app
+    # registration's optional claim set to emit sAMAccountName.
+    GROUP_NAME_PREFIX: str = "tms"
+
     # Entra ID (prod path)
     ENTRA_TENANT_ID: str = ""
     ENTRA_CLIENT_ID: str = ""

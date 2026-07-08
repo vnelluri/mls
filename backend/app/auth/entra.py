@@ -105,11 +105,15 @@ def validate_token(token: str) -> Dict:
 
 
 def extract_group_ids(claims: Dict) -> List[str]:
-    """Extract Entra group object IDs from validated claims.
+    """Extract the entries of the `groups` claim from validated claims —
+    sAMAccountName group NAMES for AD-synced groups (the convention path in
+    group_mapping.py) or object IDs (GUIDs) otherwise.
 
     Handles the common `groups` claim shape. (Overage scenarios where Entra
     omits `groups` and instead sets a `_claim_names`/`hasgroups` indicator
-    requiring a follow-up Microsoft Graph call are out of scope for v1.)
+    requiring a follow-up Microsoft Graph call are out of scope for v1;
+    emitting only "groups assigned to the application" in the app
+    registration keeps the claim small enough to avoid overage.)
     """
     groups = claims.get("groups") or []
     if isinstance(groups, str):
