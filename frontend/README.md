@@ -33,6 +33,22 @@ If you want to skip the backend health check entirely (e.g. developing UI agains
 npm run dev:vite-only
 ```
 
+## Tests
+
+```bash
+npm test          # vitest run (jsdom, no backend needed)
+npm run test:watch
+```
+
+Vitest + Testing Library, colocated as `src/**/*.test.ts(x)`. The suite pins
+`VITE_DEMO_MODE=false` in `vitest.config.ts` so results don't depend on your
+local `.env`; the demo-mode behavior is tested explicitly via `vi.stubEnv`.
+Coverage focuses on the logic the pages lean on: the `getJobActions` matrix
+(staging vs production × role capabilities), the `useTenantContext`
+capability flags per role, the status-badge enum→label/palette mapping,
+`Pagination` ranges and boundaries, the axios auth interceptor (bearer vs
+`X-Demo-Role`), and relative-time formatting.
+
 ## Environment variables
 
 See `.env.example`:

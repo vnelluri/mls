@@ -125,6 +125,10 @@ export interface RunHistoryEntry {
   startedAt: string;
   endedAt?: string;
   finalStatus: string;
+  /** Step states as they ended (outputs, errors, EMR run ids), archived when
+   * the run was retried/resumed. Only the most recent archived runs keep
+   * this detail; entries from before the field existed lack it. */
+  steps?: JobStepState[];
 }
 
 export interface Job {
