@@ -110,7 +110,7 @@ def fixed_dq(monkeypatch):
         monkeypatch.setattr(
             MockDataQualityService,
             "execute",
-            lambda self, cfg, drift_baseline=None, drift_seed=None: dict(result),
+            lambda self, cfg, drift_baseline=None, drift_seed=None, previous_row_count=None: dict(result),
         )
 
     return _set

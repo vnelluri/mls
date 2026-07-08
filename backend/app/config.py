@@ -51,7 +51,30 @@ class Settings(BaseSettings):
     # ---- Execution mode switches -----------------------------------------
     EMR_MODE: str = "mock"  # "mock" | "real"
     SNOWFLAKE_MODE: str = "mock"  # "mock" | "real"
+    DQ_MODE: str = "mock"  # "mock" | "real"
     EMR_MOCK_FAILURE_RATE: float = 0.0
+
+    # ---- Snowflake connection (SNOWFLAKE_MODE=real only) -------------------
+    # The platform connects as a single SERVICE ACCOUNT — users never connect
+    # to Snowflake and no user identity/credential is forwarded to it. The
+    # role granted to this account bounds what any tenant pipeline can export.
+    SNOWFLAKE_ACCOUNT: str = ""
+    SNOWFLAKE_USER: str = ""
+    # Key-pair auth: PEM content, arriving as an SSM SecureString -> env var.
+    # Password is the non-prod fallback.
+    SNOWFLAKE_PRIVATE_KEY: str = ""
+    SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: str = ""
+    SNOWFLAKE_PASSWORD: str = ""
+    SNOWFLAKE_ROLE: str = ""
+    # STORAGE INTEGRATION used by COPY INTO unloads — S3 access is granted
+    # Snowflake-side; no AWS credentials ever appear in SQL.
+    SNOWFLAKE_STORAGE_INTEGRATION: str = ""
+
+    # ---- Data-quality engine (DQ_MODE=real only) ---------------------------
+    # Byte budget for reading a run's scoring output from S3: files beyond
+    # this are skipped (the computed stats note they were sampled), bounding
+    # both memory and how long a DQ step can hold a refresh pass.
+    DQ_MAX_BYTES: int = 512 * 1024 * 1024
 
     # ---- Monitoring thresholds (global defaults) --------------------------
     PSI_WARN: float = 0.10

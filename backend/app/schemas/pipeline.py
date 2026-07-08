@@ -51,6 +51,10 @@ class DataQualityCheckItem(ApiModel):
 class DataQualityCheckConfig(ApiModel):
     checks: List[DataQualityCheckItem]
     inputS3Uri: str
+    # Real DQ engine only: the scoring-output column holding the model's
+    # prediction. Its null fraction is the run's errorRate (a row the model
+    # failed to score is an error). Unset -> errorRate is reported as 0.
+    predictionColumn: Optional[str] = None
 
 
 class ApprovalConfig(ApiModel):

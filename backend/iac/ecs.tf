@@ -9,6 +9,7 @@ locals {
     DDB_ENDPOINT_URL           = "" # empty -> real DynamoDB via the task role
     EMR_MODE                   = var.emr_mode
     SNOWFLAKE_MODE             = var.snowflake_mode
+    DQ_MODE                    = var.dq_mode
     CORS_ALLOWED_ORIGINS       = var.cors_allowed_origins
     TABLE_TENANTS              = aws_dynamodb_table.this["tenants"].name
     TABLE_GROUP_MAPPINGS       = aws_dynamodb_table.this["group-mappings"].name
@@ -75,10 +76,12 @@ resource "aws_ecs_task_definition" "this" {
         for k, v in local.environment : { name = k, value = v }
       ]
 
-      # Entra settings arrive as SSM-parameter secrets. With AUTH_MODE=prod
-      # the app fails fast at startup if any required one is blank.
+      # Entra + Snowflake settings arrive as SSM-parameter secrets. The app
+      # fails fast at startup if a required one is blank (AUTH_MODE=prod /
+      # SNOWFLAKE_MODE=real).
       secrets = [
-        for k, arn in var.entra_parameter_arns : { name = k, valueFrom = arn }
+        for k, arn in merge(var.entra_parameter_arns, var.snowflake_parameter_arns) :
+        { name = k, valueFrom = arn }
       ]
 
       healthCheck = {

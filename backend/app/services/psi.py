@@ -1,11 +1,10 @@
 """Population Stability Index (PSI) computation.
 
-The formula here is the production-real one — what's mocked elsewhere is only
-*data acquisition*: in local dev there is no real scoring output to bin, so
-data_quality_service synthesizes a plausible "current" distribution
-(deterministically, seeded per run) and feeds it through this same math.
-Swapping in a real DQ engine later means replacing the simulation with actual
-binned scoring data; the PSI computation itself does not change.
+The formula here is the production-real one — what differs between DQ modes
+is only *data acquisition*: RealDataQualityService (DQ_MODE=real) bins the
+run's actual scoring output via proportions_from_values, while the mock
+synthesizes a plausible "current" distribution (deterministically, seeded per
+run). Both feed through the same compute_psi.
 
 Conventional reading of the score (matches the platform's default
 thresholds): < 0.10 stable, 0.10–0.25 moderate shift (Rework zone),
@@ -13,10 +12,28 @@ thresholds): < 0.10 stable, 0.10–0.25 moderate shift (Rework zone),
 """
 import math
 import random
-from typing import Dict, List
+from bisect import bisect_right
+from typing import Dict, List, Optional
 
 # Smoothing to avoid log(0)/division-by-zero on empty buckets.
 _EPSILON = 1e-4
+
+
+def proportions_from_values(values: List[float], bins: List[float]) -> Optional[List[float]]:
+    """Bin raw feature values into the baseline's bucket edges and return the
+    per-bucket proportions — the real-data path feeding compute_psi. Values
+    outside the edge range are clamped into the boundary buckets (standard
+    PSI practice: outliers count as extreme-bucket mass, they don't vanish).
+    Returns None when there is nothing to bin."""
+    if not values or len(bins) < 2:
+        return None
+    counts = [0] * (len(bins) - 1)
+    for v in values:
+        idx = bisect_right(bins, v) - 1
+        idx = min(max(idx, 0), len(counts) - 1)
+        counts[idx] += 1
+    total = len(values)
+    return [c / total for c in counts]
 
 
 def compute_psi(expected: List[float], actual: List[float]) -> float:

@@ -26,6 +26,7 @@ from app.routers import (
     pipelines,
     tenants,
 )
+from app.services import data_pipeline_service, data_quality_service
 from app.services.job_service import background_refresh_running_jobs
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,12 @@ async def lifespan(app: FastAPI):
     # those checks).
     if settings.AUTH_MODE == "prod":
         entra.validate_prod_config()
+    # Same fail-fast policy for the real executors: a half-configured
+    # connector would otherwise surface as every run failing at runtime.
+    if settings.SNOWFLAKE_MODE == "real":
+        data_pipeline_service.validate_real_config()
+    if settings.DQ_MODE == "real":
+        data_quality_service.validate_real_config()
     task = asyncio.create_task(_refresh_loop())
     try:
         yield

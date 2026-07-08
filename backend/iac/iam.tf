@@ -23,9 +23,12 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
 
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
-    sid       = "ReadEntraParameters"
-    actions   = ["ssm:GetParameters"]
-    resources = values(var.entra_parameter_arns)
+    sid     = "ReadInjectedParameters"
+    actions = ["ssm:GetParameters"]
+    resources = concat(
+      values(var.entra_parameter_arns),
+      values(var.snowflake_parameter_arns),
+    )
   }
 }
 
@@ -89,4 +92,24 @@ resource "aws_iam_role_policy" "task_emr" {
   name   = "emr-serverless-job-runs"
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task_emr.json
+}
+
+# S3 read access for the real DQ engine (DQ_MODE=real): list + get on the
+# scoring-output locations named in dq_s3_read_arns. Attach only when used.
+data "aws_iam_policy_document" "task_dq_s3" {
+  statement {
+    sid = "DqScoringOutputRead"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+    ]
+    resources = var.dq_s3_read_arns
+  }
+}
+
+resource "aws_iam_role_policy" "task_dq_s3" {
+  count  = length(var.dq_s3_read_arns) > 0 ? 1 : 0
+  name   = "dq-scoring-output-read"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task_dq_s3.json
 }

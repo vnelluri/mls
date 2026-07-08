@@ -32,14 +32,16 @@ creates all 7 tables, seeds demo data, then runs uvicorn on port 8000 with
 - Interactive docs: http://localhost:8000/docs
 - moto (DynamoDB emulator): http://localhost:5000
 
-> **There is no EMR or Snowflake emulator — by design.** `EMR_MODE=mock` and
-> `SNOWFLAKE_MODE=mock` select *pure in-process* simulations inside the API
-> process itself. They are **not** routed through moto (moto does not
-> meaningfully emulate `emr-serverless`, and no local Snowflake emulator
-> exists at all). Don't go looking for a mock endpoint for either — only the
-> DynamoDB moto server runs locally. The mock EMR run takes ~10 seconds of
-> wall-clock time to reach a terminal state (`<3s` PENDING, `3–10s` RUNNING,
-> `≥10s` SUCCESS/FAILED), so polling `GET /jobs/{id}` shows visible progress.
+> **There is no EMR or Snowflake emulator — by design.** `EMR_MODE=mock`,
+> `SNOWFLAKE_MODE=mock`, and `DQ_MODE=mock` select *pure in-process*
+> simulations inside the API process itself. They are **not** routed through
+> moto (moto does not meaningfully emulate `emr-serverless`, and no local
+> Snowflake emulator exists at all). Don't go looking for a mock endpoint for
+> any of them — only the DynamoDB moto server runs locally. The mock EMR run
+> takes ~10 seconds of wall-clock time to reach a terminal state (`<3s`
+> PENDING, `3–10s` RUNNING, `≥10s` SUCCESS/FAILED), so polling
+> `GET /jobs/{id}` shows visible progress. See "Real execution modes" below
+> for what `real` does for each switch.
 
 ## Roles & local role switching
 
@@ -156,15 +158,58 @@ data-quality step computes **real PSI** (`services/psi.py`):
 PSI = Σ (actualᵢ − expectedᵢ) · ln(actualᵢ / expectedᵢ)
 ```
 
-Locally there is no real scoring output to bin, so the "current"
-distribution is a **deterministic, seeded simulation** derived from the
-baseline (seed = tenant + job + run id — reruns reproduce the same numbers);
-the PSI math itself is production-real, and swapping in a real DQ engine
-only replaces the simulation. Without a baseline, drift numbers stay fully
-synthetic (v1 behavior). The DQ step's output records which path ran in
-`driftComputation` (`psi_vs_baseline` | `synthetic`). Either way, the
-resulting max PSI feeds the same warn/fail thresholds and the monitoring →
-approval closure below.
+Locally (`DQ_MODE=mock`) there is no real scoring output to bin, so the
+"current" distribution is a **deterministic, seeded simulation** derived from
+the baseline (seed = tenant + job + run id — reruns reproduce the same
+numbers); without a baseline, drift numbers stay fully synthetic (v1
+behavior). With **`DQ_MODE=real`** the current distribution is the run's
+actual parquet scoring output binned into the baseline's bucket edges — see
+"Real execution modes" below. The DQ step's output records which path ran in
+`driftComputation` (`psi_vs_baseline` | `synthetic` | `none`). Either way,
+the resulting max PSI feeds the same warn/fail thresholds and the monitoring
+→ approval closure below.
+
+## Real execution modes
+
+Each switch is independent; the app **fails fast at startup** if a real mode
+is enabled without its required settings.
+
+**`SNOWFLAKE_MODE=real`** — the data_pipeline step runs a live, asynchronous
+`COPY INTO 's3://…'` unload (parquet) from the configured
+database/schema/table. The step is **poll-driven exactly like execute_model**:
+`start()` returns the Snowflake query id (persisted on the step as
+`snowflakeQueryId`), each refresh pass polls it, stop/timeout cancels it via
+`SYSTEM$CANCEL_QUERY`, and identifiers are strictly validated before being
+quoted into SQL. S3 access is granted Snowflake-side through a **storage
+integration** (`SNOWFLAKE_STORAGE_INTEGRATION`) — no AWS credentials in SQL.
+
+The platform connects as a single **service account** (`SNOWFLAKE_USER` +
+key-pair auth, PEM via SSM SecureString; password fallback for non-prod) —
+**users never connect to Snowflake** and no user identity or credential is
+ever forwarded to it. Two consequences: (1) the Snowflake role granted to
+that service account is the outer boundary of what ANY tenant's pipeline can
+export — grant it read on exactly the schemas the platform serves, nothing
+broader; (2) Snowflake's query history attributes every unload to the
+service account, so the platform's audit log (job → step → `snowflakeQueryId`)
+is the record tying an unload back to the human who triggered it. Requires
+`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, an auth method, and the storage
+integration.
+
+**`DQ_MODE=real`** — the data_quality_check step computes every number from
+the run's actual scoring output: parquet files under the step's
+`inputS3Uri`, read up to a `DQ_MAX_BYTES` budget (results are marked
+`sampled` if files were skipped). Semantics: `requestCount` = rows scored;
+`errorRate` = null fraction of the step's optional `predictionColumn` (unset
+→ 0); `null_rate` checks measure the column named by the check (a missing
+column **fails** the check); `row_count_delta` compares against the previous
+run's row count from the model's latest snapshot (first run passes);
+`schema_match` measures baseline features missing from the output columns;
+drift is **real PSI** — actual values binned into the baseline's bucket
+edges vs its stored proportions. No baseline → no drift numbers
+(`driftComputation: "none"`): the real engine never fabricates evidence.
+Unreadable/absent output **fails the step** — a run whose output cannot be
+inspected must not pass its quality gate. The task role needs S3 read on the
+scoring-output locations (`dq_s3_read_arns` in the Terraform module).
 
 ## Monitoring → approval closure
 
@@ -255,11 +300,13 @@ See `.env.example` for the complete annotated list. Highlights:
 | `AUTH_MODE` | `dev` | `dev` = synthetic user; `prod` = Entra JWT validation |
 | `DEV_USER_ROLE` / `DEV_USER_TENANT_ID` | `LeadDataScientist` / `acme-capital` | local identity (restart to apply) |
 | `DDB_ENDPOINT_URL` | `http://localhost:5000` | moto in dev; leave empty for real AWS |
-| `EMR_MODE` / `SNOWFLAKE_MODE` | `mock` | in-process simulations (no emulator exists for either) |
+| `EMR_MODE` / `SNOWFLAKE_MODE` / `DQ_MODE` | `mock` | in-process simulations; `real` = EMR Serverless / live Snowflake unloads / S3-parquet DQ engine (see "Real execution modes") |
+| `SNOWFLAKE_ACCOUNT/USER/PRIVATE_KEY/STORAGE_INTEGRATION` | empty | required when `SNOWFLAKE_MODE=real` (startup-validated) |
+| `DQ_MAX_BYTES` | `536870912` | byte budget for reading scoring output in real DQ mode |
 | `EMR_MOCK_FAILURE_RATE` | `0.0` | fraction of mock EMR runs that fail (decided once at start) |
 | `PSI_WARN/PSI_FAIL/ERROR_RATE_WARN/ERROR_RATE_FAIL` | `0.10/0.25/0.05/0.15` | monitoring thresholds |
 | `JOB_REFRESH_INTERVAL_SECONDS` | `30` | background EMR poll cadence |
-| `STEP_DURATION_SECONDS` | `30` | runtime of the timer-driven steps (data_pipeline, data_quality_check) |
+| `STEP_DURATION_SECONDS` | `30` | mock-mode step runtime (data_quality_check timer; mock data_pipeline query duration) |
 | `STEP_TIMEOUT_SECONDS` | `21600` | per-step runtime ceiling — a step past it is failed and its EMR run cancelled |
 | `CORS_ALLOWED_ORIGINS` | localhost:3000,localhost:5173 | comma-separated |
 

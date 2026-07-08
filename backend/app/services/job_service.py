@@ -6,11 +6,12 @@ order snapshotted from the pipeline at submit time:
 
     data_pipeline -> execute_model -> data_quality_check -> [approval]
 
-Steps execute one at a time through the dummy job runner: starting a step
-prints and marks it `running`; STEP_DURATION_SECONDS later a refresh (the
-detail-page GET or the background loop) completes it — producing its mock
-output — and the cascade starts the next step. No thread is held while a
-step "runs".
+Steps execute one at a time. data_pipeline (Snowflake unload) and
+execute_model (EMR run) start external compute and are completed by status
+polls on each refresh pass (the detail-page GET or the background loop);
+data_quality_check is timer-driven (STEP_DURATION_SECONDS in mock mode) and
+produces its output at completion. No thread is ever held while a step
+"runs" — long external work is polled, never awaited.
 """
 import copy
 import hashlib
@@ -22,7 +23,7 @@ from typing import List, Optional
 
 from app.config import settings
 from app.core.exceptions import ConcurrentWriteError, bad_request, conflict, forbidden, not_found, tenant_mismatch
-from app.repositories import job_repo, model_repo, pipeline_repo, tenant_repo
+from app.repositories import job_repo, model_repo, monitoring_repo, pipeline_repo, tenant_repo
 from app.schemas.common import CurrentUser
 from app.schemas.job import JobCreate
 from app.services import audit_service, job_runner, monitoring_service
@@ -58,22 +59,29 @@ def _idempotent_job_id(tenant_id: str, idempotency_key: str) -> str:
 
 
 def _cancel_emr_runs_lost_to_race(item: dict) -> None:
-    """Our job write lost the optimistic lock AFTER we may have started EMR
-    runs for cascade-advanced steps. Any EMR run id present only in our
-    (losing) in-memory copy is compute nobody's persisted state references —
-    an orphan burning cost and, worse, a second writer into the same
-    run-scoped output prefix. Cancel it, best-effort."""
+    """Our job write lost the optimistic lock AFTER we may have started
+    external compute (EMR runs, Snowflake unloads) for cascade-advanced
+    steps. Any external run/query id present only in our (losing) in-memory
+    copy is compute nobody's persisted state references — an orphan burning
+    cost and, worse, a second writer into the same output prefix. Cancel it,
+    best-effort."""
     try:
         fresh = job_repo.get_job(item["tenant_id"], item["job_id"])
     except Exception:
         logger.exception("Could not re-read job %s for orphan-run cleanup", item.get("job_id"))
         return
-    persisted_run_ids = {s.get("emrJobRunId") for s in (fresh or {}).get("steps", [])}
+    fresh_steps = (fresh or {}).get("steps", [])
+    persisted_run_ids = {s.get("emrJobRunId") for s in fresh_steps}
+    persisted_query_ids = {s.get("snowflakeQueryId") for s in fresh_steps}
     for step in item["steps"]:
         run_id = step.get("emrJobRunId")
         if step["type"] == "execute_model" and run_id and run_id not in persisted_run_ids:
             logger.warning("Cancelling orphaned EMR run %s (job %s lost a write race)", run_id, item["job_id"])
             _cancel_emr_run(step)
+        query_id = step.get("snowflakeQueryId")
+        if step["type"] == "data_pipeline" and query_id and query_id not in persisted_query_ids:
+            logger.warning("Cancelling orphaned Snowflake query %s (job %s lost a write race)", query_id, item["job_id"])
+            _cancel_pipeline_query(step)
 
 
 def _persist_job_action(item: dict) -> dict:
@@ -156,6 +164,7 @@ def _blank_step(pipeline_step: dict) -> dict:
         "completedAt": None,
         "emrJobRunId": None,
         "emrStateDetail": None,
+        "snowflakeQueryId": None,
         "errorMessage": None,
         "output": None,
         "config": pipeline_step.get("config"),
@@ -177,21 +186,19 @@ def _elapsed_seconds(started_at_iso: str) -> float:
 
 
 def _start_step(item: dict, step: dict) -> None:
-    """Begin a step's STEP_DURATION_SECONDS execution window (dummy runner)."""
+    """Start a step. execute_model and data_pipeline kick off external
+    compute (EMR run / Snowflake query) and are completed by status polls;
+    data_quality_check is timer-driven (STEP_DURATION_SECONDS)."""
     step["status"] = "running"
     step["startedAt"] = _now()
     if step["type"] == "execute_model":
         result = get_emr_execution_service().start(step["config"])
         step["emrJobRunId"] = result["emrJobRunId"]
         step["emrStateDetail"] = "RUNNING"
+    elif step["type"] == "data_pipeline":
+        result = get_data_pipeline_service().start(step["config"])
+        step["snowflakeQueryId"] = result["queryId"]
     job_runner.start_step(item, step)
-
-
-def _complete_data_pipeline_step(step: dict) -> None:
-    result = get_data_pipeline_service().execute(step["config"])
-    step["completedAt"] = _now()
-    step["status"] = "succeeded"
-    step["output"] = result
 
 
 def _complete_execute_model_step(item: dict, step: dict, state_detail: str) -> None:
@@ -235,6 +242,32 @@ def _cancel_emr_run(step: dict) -> None:
         step["emrStateDetail"] = "CANCELLING"
     except Exception:
         logger.exception("Failed to cancel EMR job run %s", step.get("emrJobRunId"))
+
+
+def _cancel_pipeline_query(step: dict) -> None:
+    """Best-effort Snowflake query cancellation (stop_job / step timeout)."""
+    if not step.get("snowflakeQueryId"):
+        return
+    try:
+        get_data_pipeline_service().cancel(step["snowflakeQueryId"], step.get("config"))
+    except Exception:
+        logger.exception("Failed to cancel Snowflake query %s", step.get("snowflakeQueryId"))
+
+
+def _poll_pipeline_status(step: dict) -> dict:
+    """Poll the data-pipeline executor for the step's query state. A poll
+    failure is treated as still-running (the next refresh retries; the step
+    timeout is the backstop), never as step failure."""
+    try:
+        return get_data_pipeline_service().get_status(
+            step.get("snowflakeQueryId") or "", step.get("startedAt"), step.get("config")
+        )
+    except Exception:
+        logger.exception(
+            "Snowflake status poll failed for query %s -- retrying next pass",
+            step.get("snowflakeQueryId"),
+        )
+        return {"state": "RUNNING", "stateDetail": "Status poll failed; will retry"}
 
 
 def _job_model_ref(item: dict) -> Optional[tuple]:
@@ -281,8 +314,23 @@ def _execute_data_quality_step(item: dict, step: dict) -> bool:
         drift_baseline = (model or {}).get("driftBaseline")
     drift_seed = f"{item['tenant_id']}:{item['job_id']}:{item['run_id']}"
 
+    # Real DQ's row_count_delta compares against the previous run's row count
+    # (= requestCount on the model's latest snapshot). Only fetched in real
+    # mode; the mock ignores it.
+    previous_row_count = None
+    if model_ref and settings.DQ_MODE == "real":
+        try:
+            trend = monitoring_repo.list_trend_for_model(item["tenant_id"], model_ref[0], model_ref[1])
+            if trend:
+                previous_row_count = int(trend[0].get("requestCount") or 0) or None
+        except Exception:
+            logger.exception("Could not fetch previous row count for job %s", item["job_id"])
+
     dq_result = get_data_quality_service().execute(
-        step["config"], drift_baseline=drift_baseline, drift_seed=drift_seed
+        step["config"],
+        drift_baseline=drift_baseline,
+        drift_seed=drift_seed,
+        previous_row_count=previous_row_count,
     )
     step["completedAt"] = _now()
     step["output"] = dq_result
@@ -392,16 +440,11 @@ def _still_running_in_db(item: dict, step_id: str) -> bool:
 def _complete_step(item: dict, step: dict) -> None:
     """A timer-driven step's STEP_DURATION_SECONDS window has elapsed:
     produce its output (which for data_quality_check may fail the job) and
-    print the runner's FINISH line. execute_model steps never come through
-    here -- they complete via the EMR status poll in _refresh_running_steps."""
+    print the runner's FINISH line. execute_model and data_pipeline steps
+    never come through here -- they complete via their status polls in
+    _refresh_running_steps."""
     step_type = step["type"]
-    if step_type == "data_pipeline":
-        try:
-            _complete_data_pipeline_step(step)
-        except Exception as exc:
-            logger.exception("data_pipeline step %s failed", step["step_id"])
-            _fail_step(item, step, f"Data pipeline execution failed: {exc}")
-    elif step_type == "data_quality_check":
+    if step_type == "data_quality_check":
         # An executor exception must FAIL the step, never escape: an escaped
         # exception would leave the step `running` and the refresh loop
         # re-raising forever.
@@ -451,13 +494,47 @@ def _refresh_execute_model_step(item: dict, step: dict) -> Optional[bool]:
     return False
 
 
+def _refresh_data_pipeline_step(item: dict, step: dict) -> Optional[bool]:
+    """Advance a running data_pipeline step from the executor's actual query
+    state (SUCCESS completes it, FAILED/CANCELLED fails the job, anything
+    else keeps it running). Returns True if the item was mutated, False if
+    not, and None if another writer already advanced this run (the caller
+    must stop -- `item` now holds the adopted fresh state)."""
+    pipeline_status = _poll_pipeline_status(step)
+    state = pipeline_status.get("state", "RUNNING")
+
+    if state == "SUCCESS":
+        if not _still_running_in_db(item, step["step_id"]):
+            return None
+        step["completedAt"] = _now()
+        step["status"] = "succeeded"
+        step["output"] = pipeline_status.get("output") or {
+            "s3Uri": (step.get("config") or {}).get("destinationS3Uri")
+        }
+        job_runner.finish_step(item, step)
+        _run_cascade(item)
+        return True
+
+    if state in ("FAILED", "CANCELLED"):
+        if not _still_running_in_db(item, step["step_id"]):
+            return None
+        _fail_step(
+            item, step,
+            f"Data pipeline query ended in {state}: {pipeline_status.get('stateDetail') or 'no detail provided'}",
+        )
+        job_runner.finish_step(item, step)
+        return True
+
+    return False
+
+
 def _refresh_running_steps(item: dict) -> bool:
-    """Advances every `running` step: execute_model from the EMR executor's
-    reported state, the timer-driven steps once STEP_DURATION_SECONDS has
-    elapsed. Any step past STEP_TIMEOUT_SECONDS is failed outright (with a
-    best-effort EMR cancel) so a stuck executor can't strand the job in
-    `running` forever. Returns True if the job item was mutated (caller
-    should persist)."""
+    """Advances every `running` step: execute_model and data_pipeline from
+    their executors' reported state, the timer-driven data_quality_check once
+    STEP_DURATION_SECONDS has elapsed. Any step past STEP_TIMEOUT_SECONDS is
+    failed outright (with a best-effort cancel of its external compute) so a
+    stuck executor can't strand the job in `running` forever. Returns True if
+    the job item was mutated (caller should persist)."""
     changed = False
     # Only steps already running when this pass began are eligible to
     # complete here; a step the cascade starts mid-pass waits for the next
@@ -478,6 +555,8 @@ def _refresh_running_steps(item: dict) -> bool:
                 return False  # another writer already advanced this run
             if step["type"] == "execute_model":
                 _cancel_emr_run(step)
+            elif step["type"] == "data_pipeline":
+                _cancel_pipeline_query(step)
             _fail_step(
                 item, step,
                 f"Step timed out after {int(elapsed)}s (STEP_TIMEOUT_SECONDS={settings.STEP_TIMEOUT_SECONDS})",
@@ -488,6 +567,13 @@ def _refresh_running_steps(item: dict) -> bool:
 
         if step["type"] == "execute_model":
             result = _refresh_execute_model_step(item, step)
+            if result is None:
+                return False  # another writer already advanced this run
+            changed = changed or result
+            continue
+
+        if step["type"] == "data_pipeline":
+            result = _refresh_data_pipeline_step(item, step)
             if result is None:
                 return False  # another writer already advanced this run
             changed = changed or result
@@ -851,10 +937,15 @@ def stop_job(current_user: CurrentUser, job_id: str, tenant_id: Optional[str] = 
         raise conflict(f"Cannot stop a job in status '{item['status']}'")
 
     # Stopping the platform job must also stop the compute behind it --
-    # otherwise a "cancelled" job would leave a real EMR run burning.
+    # otherwise a "cancelled" job would leave a real EMR run or Snowflake
+    # unload burning.
     for step in item["steps"]:
-        if step["status"] == "running" and step["type"] == "execute_model":
+        if step["status"] != "running":
+            continue
+        if step["type"] == "execute_model":
             _cancel_emr_run(step)
+        elif step["type"] == "data_pipeline":
+            _cancel_pipeline_query(step)
 
     item["status"] = "cancelled"
     _persist_job_action(item)
@@ -903,6 +994,7 @@ def _reset_step(step: dict) -> None:
     step["completedAt"] = None
     step["emrJobRunId"] = None
     step["emrStateDetail"] = None
+    step["snowflakeQueryId"] = None
     step["errorMessage"] = None
     step["output"] = None
 

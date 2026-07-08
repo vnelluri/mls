@@ -16,6 +16,10 @@ class JobStepState(ApiModel):
     completedAt: Optional[str] = None
     emrJobRunId: Optional[str] = None
     emrStateDetail: Optional[str] = None
+    # data_pipeline steps: the Snowflake query id of the async COPY INTO
+    # unload — polled to completion, cancellable, survives restarts (the
+    # data-pipeline analogue of emrJobRunId).
+    snowflakeQueryId: Optional[str] = None
     errorMessage: Optional[str] = None
     output: Optional[dict] = None
     # NOTE: `config` is not in the original field list from the platform spec,

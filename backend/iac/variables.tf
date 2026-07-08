@@ -114,9 +114,43 @@ variable "emr_mode" {
 }
 
 variable "snowflake_mode" {
-  description = "SNOWFLAKE_MODE: \"mock\" or \"real\"."
+  description = "SNOWFLAKE_MODE: \"mock\" or \"real\" (live async COPY INTO unloads; requires snowflake_parameter_arns)."
   type        = string
   default     = "mock"
+}
+
+variable "dq_mode" {
+  description = "DQ_MODE: \"mock\" or \"real\" (computes quality/drift evidence from the run's parquet scoring output on S3; requires dq_s3_read_arns)."
+  type        = string
+  default     = "mock"
+}
+
+variable "snowflake_parameter_arns" {
+  description = <<-EOT
+    SSM parameter ARNs for the Snowflake SERVICE ACCOUNT the platform
+    connects as (users never connect to Snowflake themselves), injected as
+    container secrets when SNOWFLAKE_MODE=real (the app refuses to start in
+    real mode without account, user, an auth method, and the storage
+    integration). Scope the account's Snowflake role tightly: it bounds what
+    any tenant pipeline can export. Keys: SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER,
+    SNOWFLAKE_PRIVATE_KEY (PEM, SecureString), SNOWFLAKE_STORAGE_INTEGRATION,
+    and optionally SNOWFLAKE_ROLE / SNOWFLAKE_PRIVATE_KEY_PASSPHRASE /
+    SNOWFLAKE_PASSWORD.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "dq_s3_read_arns" {
+  description = <<-EOT
+    S3 ARNs the real DQ engine may read scoring output from — include BOTH
+    the bucket ARNs (for ListBucket) and the object-prefix ARNs (for
+    GetObject), e.g.:
+      ["arn:aws:s3:::scoring-out", "arn:aws:s3:::scoring-out/*"]
+    Only attached when non-empty.
+  EOT
+  type        = list(string)
+  default     = []
 }
 
 variable "entra_parameter_arns" {
