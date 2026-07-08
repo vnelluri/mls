@@ -2,9 +2,6 @@
 # the source of truth the application code is written against). Every key
 # attribute is a string — model `version` is free-form ("1", "2.1.0") and the
 # old cross-tenant name-index was deliberately removed.
-#
-# NOTE: provision the tables with EITHER this module OR
-# infrastructure/dynamodb-tables.cf.yaml — never both (same table names).
 
 locals {
   tables = {

@@ -1,15 +1,10 @@
 # Frontend IaC (Terraform module)
 
 ECS Fargate service for the frontend — an nginx container serving the built
-SPA on port 80 — mirroring `infrastructure/ecs-task-def.json` /
-`ecs-service.json`: log group, task definition with the wget health check,
-and a circuit-breaker service optionally attached to an ALB target group.
-Creates a dedicated cluster unless you pass one in (typically you'd reuse
-the backend's).
-
-> **Pick one provisioning path.** This module and the JSON files under
-> `infrastructure/` describe the same resources with the same names — apply
-> one or the other, never both.
+SPA on port 80: log group, task definition with the wget health check, and a
+circuit-breaker service optionally attached to an ALB target group. Creates
+a dedicated cluster unless you pass one in (typically you'd reuse the
+backend's).
 
 Networking (VPC, subnets, security groups, the ALB itself) is out of scope:
 pass in what your landing zone provides. Remember the SPA reads its `VITE_*`

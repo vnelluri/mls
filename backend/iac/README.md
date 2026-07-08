@@ -13,10 +13,6 @@ Provisions everything the backend needs in AWS:
   and a service with circuit-breaker rollback, optionally attached to an
   ALB target group. Creates a dedicated cluster unless you pass one in.
 
-> **Pick one provisioning path.** This module and
-> `infrastructure/dynamodb-tables.cf.yaml` + the `ecs-*.json` files describe
-> the same resources with the same names — apply one or the other, never both.
-
 Networking (VPC, subnets, security groups, the ALB itself) is deliberately
 out of scope: pass in what your landing zone provides.
 

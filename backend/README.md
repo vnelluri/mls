@@ -289,18 +289,18 @@ See `.env.example` for the complete annotated list. Highlights:
 
 ## Deploying to ECS (Fargate)
 
-> Prefer Terraform? `iac/` is a complete module (tables + IAM + ECS service)
-> covering steps 1, 3 and 4 below — see `iac/README.md`. Use **either** the
-> Terraform module **or** the CloudFormation/JSON files here, never both
-> (they create identically named resources).
+Provisioning is Terraform: **`iac/`** is a complete module — the 7 DynamoDB
+tables + GSIs, execution/task IAM roles (least-privilege on the tables;
+EMR Serverless permissions only when `emr_mode = "real"`), and the Fargate
+task definition + service. See `iac/README.md` for the usage example and
+variables.
 
-1. Create tables: `aws cloudformation deploy --template-file infrastructure/dynamodb-tables.cf.yaml --stack-name mlserv-dynamodb`
-2. Build & push the image (prod stage): `docker build --target prod -t mlserv-backend .` then tag/push to ECR.
-3. Edit `infrastructure/ecs-task-def.json` (account ID, roles, SSM parameter ARNs for the Entra settings) and register: `aws ecs register-task-definition --cli-input-json file://infrastructure/ecs-task-def.json`
-4. Edit `infrastructure/ecs-service.json` (subnets, security group, target group) and create: `aws ecs create-service --cli-input-json file://infrastructure/ecs-service.json`
-5. Point the frontend at the ALB and set `CORS_ALLOWED_ORIGINS` accordingly.
-   The task role needs `dynamodb:GetItem/PutItem/UpdateItem/DeleteItem/Query`
-   on the 7 `mlserv-*` tables and their indexes.
+1. Build & push the image (prod stage): `docker build --target prod -t mlserv-backend .` then tag/push to ECR.
+2. Create the SSM parameters for the Entra settings (`/mlserv/entra-*`) —
+   with `AUTH_MODE=prod` the app refuses to start unless they're set.
+3. `terraform apply` the `iac/` module with your image, subnets, security
+   groups, and ALB target group.
+4. Point the frontend at the ALB and set `cors_allowed_origins` accordingly.
 
 The Dockerfile is **CI/deploy only** — local development never needs it.
 
@@ -319,5 +319,6 @@ app/
   routers/           HTTP endpoints
   core/              pagination + shared HTTP exceptions
 scripts/             dev.py (local orchestrator), create_tables.py, seed_demo_data.py, test-api.sh
-infrastructure/      CloudFormation (tables), ECS task def + service
+tests/               pytest suite (in-process moto; see "Tests")
+iac/                 Terraform module: DynamoDB tables, IAM, ECS service
 ```

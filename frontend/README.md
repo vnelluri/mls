@@ -208,18 +208,19 @@ docker run -p 8080:80 ml-serving-monitoring-frontend
 
 Multi-stage build: `node:20-alpine` builds the static bundle, `nginx:alpine` serves it on port 80
 with SPA-fallback routing (`nginx.conf`). Port 80 was chosen (rather than 3000) to match a typical
-production nginx setup fronted by an ALB — see `infrastructure/ecs-task-def.json`.
+production nginx setup fronted by an ALB — see the `iac/` Terraform module.
 
 ## ECS deploy (outline)
 
+Provisioning is Terraform: **`iac/`** is a complete module (log group, task
+definition with the port-80 health check, Fargate service with optional ALB
+attachment) — see `iac/README.md` for usage.
+
 1. Build and push the image to ECR: `docker build -t <ecr-repo>:<tag> . && docker push <ecr-repo>:<tag>`.
-2. Fill in the placeholders in `infrastructure/ecs-task-def.json` (`<ACCOUNT_ID>`, `<REGION>`,
-   `<TAG>`) and register it: `aws ecs register-task-definition --cli-input-json file://infrastructure/ecs-task-def.json`.
-3. Fill in the placeholders in `infrastructure/ecs-service.json` (`<CLUSTER_NAME>`, subnet/security
-   group/target-group IDs) and create or update the service:
-   `aws ecs create-service --cli-input-json file://infrastructure/ecs-service.json` (or
-   `update-service` on subsequent deploys).
-4. Point an ALB target group at container port 80; health check path `/`.
+   Remember `VITE_*` config (API base URL, Entra client id) is baked in at build time.
+2. `terraform apply` the `iac/` module with your image, subnets, security groups,
+   and target group (reuse the backend's ECS cluster via its `cluster_arn` output).
+3. Point an ALB target group at container port 80; health check path `/`.
 
 ## Repository layout
 
@@ -236,6 +237,6 @@ src/
     canvas/                             PipelineCanvas, StepNode, panels/*
   pages/                                admin/, pipelines/, jobs/, models/, monitoring/, audit/, auth/
 scripts/dev.mjs                         No-Docker local dev bootstrapper
-infrastructure/                         ECS task def + service (Fargate)
+iac/                                    Terraform module: ECS Fargate service
 Dockerfile                              CI/deploy-only, multi-stage, nginx:alpine
 ```

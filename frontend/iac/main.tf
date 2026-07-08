@@ -1,8 +1,5 @@
-# ECS Fargate service for the frontend (nginx serving the built SPA),
-# mirroring infrastructure/ecs-task-def.json / ecs-service.json.
-#
-# NOTE: pick one provisioning path — this module OR the JSON task-def/service
-# files under infrastructure/ — never both (same names).
+# ECS Fargate service for the frontend (nginx serving the built SPA on
+# port 80).
 
 locals {
   create_cluster = var.cluster_arn == ""
