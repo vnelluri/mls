@@ -59,6 +59,7 @@ See `.env.example`:
 | `VITE_DEMO_MODE` | `true` shows a cosmetic role selector on the login page instead of the Microsoft sign-in button. Local dev only. |
 | `VITE_ENTRA_TENANT_ID` | Entra ID (Azure AD) tenant ID, used to build the MSAL authority URL. Production only. |
 | `VITE_ENTRA_CLIENT_ID` | Entra ID app registration client ID. Production only. |
+| `VITE_ENTRA_API_SCOPE` | Scope requested for backend API tokens (the token's `aud` must match the backend's `ENTRA_AUDIENCE`/`ENTRA_CLIENT_ID`). Defaults to `api://<VITE_ENTRA_CLIENT_ID>/.default`; set explicitly when the API is a separate app registration. Production only. |
 
 **Important:** because this is a static Vite SPA, `VITE_*` values are baked into the JS bundle at
 *build* time, not read at container runtime. Setting environment variables on the ECS task
@@ -189,13 +190,17 @@ Once both are up:
 
 ## Production checklist
 
-- Set `VITE_DEMO_MODE=false`, `VITE_ENTRA_TENANT_ID`, `VITE_ENTRA_CLIENT_ID`, and the real
+- Set `VITE_DEMO_MODE=false`, `VITE_ENTRA_TENANT_ID`, `VITE_ENTRA_CLIENT_ID`,
+  `VITE_ENTRA_API_SCOPE` (if the API is a separate app registration), and the real
   `VITE_API_BASE_URL` at **build** time in CI before `npm run build`.
-- Wire `src/auth/AuthContext.tsx`'s bearer-token getter to a real `acquireTokenSilent` call (it's
-  currently a functional stub returning `null` — MSAL login-redirect itself is wired up, only
-  silent token acquisition/caching for the axios interceptor needs finishing for production).
-- Confirm the backend accepts the `Authorization: Bearer <token>` header format used by
-  `src/api/client.ts`.
+- Token acquisition is fully wired: login uses `loginRedirect` (completed by
+  `handleRedirectPromise` on return), and every API request acquires a token via
+  `acquireTokenSilent` (`src/auth/acquireToken.ts`), falling back to a re-auth redirect when
+  interaction is required. Expose the API scope on the backend app registration and grant the SPA
+  registration access to it.
+- On the Entra side, ensure the backend app registration emits the `groups` claim (the backend
+  resolves roles from group membership) and the SPA registration lists the deployed origin as a
+  SPA redirect URI.
 - Point the ECS target group's health check at `/` (nginx serves `index.html` for any path via SPA
   fallback — see `nginx.conf`).
 

@@ -11,6 +11,7 @@ import { PublicClientApplication } from '@azure/msal-browser';
 import { getCurrentUser } from '@/api/authApi';
 import { DEMO_MODE, getDemoSelectedRole, setBearerTokenGetter, setDemoSelectedRole } from '@/api/client';
 import { msalConfig, loginRequest } from './msalConfig';
+import { acquireApiToken } from './acquireToken';
 import type { CurrentUser, Role } from '@/types/platform';
 
 interface AuthContextValue {
@@ -67,14 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!DEMO_MODE) {
-      setBearerTokenGetter(() => {
-        if (!msalInstance) return null;
-        const accounts = msalInstance.getAllAccounts();
-        if (accounts.length === 0) return null;
-        // In production this would use acquireTokenSilent and cache the
-        // result; kept synchronous here since this is a thin demo scaffold.
-        return null;
-      });
+      // MSAL caches the token and refreshes it silently near expiry; on an
+      // interaction-required failure acquireApiToken redirects to re-auth.
+      setBearerTokenGetter(() => (msalInstance ? acquireApiToken(msalInstance) : null));
     }
 
     const bootstrap = async () => {
@@ -88,9 +84,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      await ensureMsalInitialized();
-      const accounts = msalInstance?.getAllAccounts() ?? [];
-      if (accounts.length > 0) {
+      try {
+        await ensureMsalInitialized();
+        // Landing back from a loginRedirect: this call processes the auth
+        // response in the URL and stores the account. Without it the login
+        // never completes and the app bounces back to the sign-in screen.
+        const redirectResult = await msalInstance!.handleRedirectPromise();
+        if (redirectResult?.account) {
+          msalInstance!.setActiveAccount(redirectResult.account);
+        } else if (!msalInstance!.getActiveAccount()) {
+          const accounts = msalInstance!.getAllAccounts();
+          if (accounts.length > 0) msalInstance!.setActiveAccount(accounts[0]);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? `Sign-in failed: ${err.message}` : 'Sign-in failed.');
+        setLoading(false);
+        return;
+      }
+
+      if (msalInstance!.getActiveAccount()) {
         await refresh();
       } else {
         setLoading(false);

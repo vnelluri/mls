@@ -34,6 +34,20 @@ describe('apiClient auth interceptor (production mode)', () => {
     expect(headers.get('Authorization')).toBe('Bearer token-123');
   });
 
+  it('awaits an async token getter (acquireTokenSilent path)', async () => {
+    setBearerTokenGetter(() => Promise.resolve('async-token-456'));
+    const resp = await apiClient.get('/auth/me', { adapter: echoAdapter });
+    const headers = AxiosHeaders.from(resp.config.headers);
+    expect(headers.get('Authorization')).toBe('Bearer async-token-456');
+  });
+
+  it('fails the request when the token getter rejects (real MSAL error, not a silent 401)', async () => {
+    setBearerTokenGetter(() => Promise.reject(new Error('MSAL exploded')));
+    await expect(apiClient.get('/auth/me', { adapter: echoAdapter })).rejects.toThrow(
+      'MSAL exploded',
+    );
+  });
+
   it('sends no Authorization header when no token is available', async () => {
     setBearerTokenGetter(() => null);
     const resp = await apiClient.get('/auth/me', { adapter: echoAdapter });

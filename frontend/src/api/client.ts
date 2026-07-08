@@ -5,10 +5,14 @@ const API_BASE_URL: string =
 
 const DEMO_MODE: boolean = (import.meta.env.VITE_DEMO_MODE as string | undefined) === 'true';
 
-/** Populated by AuthContext once MSAL acquires a token (production mode only). */
-let bearerTokenGetter: (() => string | null) | null = null;
+/** Populated by AuthContext once MSAL is initialized (production mode only).
+ * May return the token synchronously or as a promise (acquireTokenSilent is
+ * async) — the request interceptor awaits it either way. */
+type BearerTokenGetter = () => string | null | Promise<string | null>;
 
-export function setBearerTokenGetter(getter: () => string | null): void {
+let bearerTokenGetter: BearerTokenGetter | null = null;
+
+export function setBearerTokenGetter(getter: BearerTokenGetter): void {
   bearerTokenGetter = getter;
 }
 
@@ -36,14 +40,14 @@ export const apiClient: AxiosInstance = axios.create({
   timeout: 15000,
 });
 
-apiClient.interceptors.request.use((config) => {
+apiClient.interceptors.request.use(async (config) => {
   if (DEMO_MODE) {
     const role = getDemoSelectedRole();
     if (role) {
       config.headers.set('X-Demo-Role', role);
     }
   } else if (bearerTokenGetter) {
-    const token = bearerTokenGetter();
+    const token = await bearerTokenGetter();
     if (token) {
       config.headers.set('Authorization', `Bearer ${token}`);
     }
