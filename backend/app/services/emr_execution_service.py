@@ -108,6 +108,15 @@ class RealEmrExecutionService(EmrExecutionService):
         self._client = boto3.client("emr-serverless", region_name=settings.AWS_REGION)
 
     def start(self, step_config: dict) -> dict:
+        """`step_config` is the RESOLVED config (job_service._service_config):
+        emrApplicationId / executionRoleArn / entryPointS3Uri come from the
+        tenant's execution config, artifactS3Uri from the model registry, and
+        inputS3Uri / outputS3Uri are this run's own prefixes.
+
+        The argument list is the scoring-entrypoint contract — see
+        backend/emr/scoring_entrypoint.py, which consumes it positionally:
+            model-name  model-version  artifact-s3-uri  input-s3-uri  output-s3-uri
+        """
         resp = self._client.start_job_run(
             applicationId=step_config["emrApplicationId"],
             executionRoleArn=step_config["executionRoleArn"],
@@ -117,6 +126,7 @@ class RealEmrExecutionService(EmrExecutionService):
                     "entryPointArguments": [
                         step_config["modelName"],
                         str(step_config["modelVersion"]),
+                        step_config["artifactS3Uri"],
                         step_config["inputS3Uri"],
                         step_config["outputS3Uri"],
                     ],

@@ -27,9 +27,14 @@ class DataPipelineConfig(ApiModel):
 class ExecuteModelConfig(ApiModel):
     modelName: str
     modelVersion: str
-    emrApplicationId: str
-    executionRoleArn: str
-    entryPointS3Uri: str
+    # Platform-managed (resolved from the tenant's execution config /
+    # EMR_ENTRYPOINT_S3_URI when the step starts). Optional only so pipelines
+    # stored before the change still parse — pipeline_service rejects
+    # user-supplied values on create/update: letting authors pick the EMR
+    # application or execution role would be privilege escalation.
+    emrApplicationId: Optional[str] = None
+    executionRoleArn: Optional[str] = None
+    entryPointS3Uri: Optional[str] = None
     inputS3Uri: str
     outputS3Uri: str
     sparkSubmitParameters: Optional[Dict] = None

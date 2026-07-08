@@ -239,7 +239,10 @@ class TestJobIntegration:
         step = job["steps"][0]
         assert job["status"] == "success"
         assert step["status"] == "succeeded"
-        assert step["output"]["s3Uri"] == "s3://bucket/in"
+        # The unload destination is run-scoped at step start:
+        # <destinationS3Uri>/<date>/<runId>/ — reruns never overwrite.
+        assert step["output"]["s3Uri"].startswith("s3://bucket/in/")
+        assert step["output"]["s3Uri"].endswith(f"/{job['runId']}/")
         assert step["output"]["rowsWritten"] > 0
 
     def test_stop_cancels_inflight_query(self, client, identity, monkeypatch):

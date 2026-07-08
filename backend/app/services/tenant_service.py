@@ -6,7 +6,7 @@ from typing import List
 from app.core.exceptions import conflict, not_found
 from app.repositories import tenant_repo
 from app.schemas.common import CurrentUser
-from app.schemas.tenant import TenantCreate
+from app.schemas.tenant import TenantCreate, TenantExecutionConfig
 from app.services import audit_service
 
 PLATFORM_PARTITION = "PLATFORM"
@@ -27,6 +27,7 @@ def create_tenant(current_user: CurrentUser, data: TenantCreate) -> dict:
         "tenant_id": tenant_id,
         "name": data.name,
         "status": "active",
+        "execution": data.execution.model_dump() if data.execution else None,
         "createdAt": now,
         "createdBy": current_user.user_id,
     }
@@ -47,6 +48,27 @@ def get_tenant(tenant_id: str) -> dict:
     item = tenant_repo.get_tenant(tenant_id)
     if not item:
         raise not_found("Tenant", tenant_id)
+    return item
+
+
+def set_execution_config(
+    current_user: CurrentUser, tenant_id: str, execution: TenantExecutionConfig
+) -> dict:
+    """Replace the tenant's platform-managed execution resources (EMR
+    application/role, scoring entrypoint, data prefix). PlatformAdmin only —
+    these bound what the tenant's pipelines can run as and where they can
+    read/write, so changes are audited like any other platform action."""
+    item = tenant_repo.get_tenant(tenant_id)
+    if not item:
+        raise not_found("Tenant", tenant_id)
+    item["execution"] = execution.model_dump()
+    tenant_repo.put_tenant(item)
+
+    audit_service.write_event(
+        PLATFORM_PARTITION, current_user.user_id, current_user.role,
+        "tenant.execution_config", "tenant", tenant_id,
+        f"Updated execution config for tenant '{item['name']}' ({tenant_id})",
+    )
     return item
 
 

@@ -409,6 +409,11 @@ export function JobDetailPage() {
             const pipelineStep = pipelineStepsById.get(step.stepId);
             const execConfig =
               pipelineStep?.type === 'execute_model' ? (pipelineStep.config as ExecuteModelConfig) : null;
+            // The EMR application is platform-managed: new runs carry it in
+            // step.resolved; pipelines stored before the change still have
+            // it in their authored config.
+            const emrApplicationId =
+              (step.resolved?.emrApplicationId as string | undefined) ?? execConfig?.emrApplicationId;
             return (
               <li key={step.stepId} className="rounded-md border border-truist-gray06 p-3">
                 <div className="flex items-center justify-between">
@@ -425,9 +430,9 @@ export function JobDetailPage() {
                   {step.completedAt && <span>Completed {new Date(step.completedAt).toLocaleString()}</span>}
                   {step.emrJobRunId && <span>EMR job run: {step.emrJobRunId}</span>}
                 </div>
-                {step.emrJobRunId && execConfig?.emrApplicationId && (
+                {step.emrJobRunId && emrApplicationId && (
                   <a
-                    href={emrConsoleUrl(execConfig.emrApplicationId, step.emrJobRunId)}
+                    href={emrConsoleUrl(emrApplicationId, step.emrJobRunId)}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-1 inline-block text-xs text-truist-purple underline"

@@ -8,7 +8,7 @@ from typing import List, Optional
 from pydantic import ValidationError
 
 from app.core.exceptions import bad_request, conflict, not_found, tenant_mismatch
-from app.repositories import job_repo, pipeline_repo
+from app.repositories import job_repo, model_repo, pipeline_repo, tenant_repo
 from app.schemas.common import CurrentUser
 from app.schemas.pipeline import ALLOWED_STEP_TYPES, CONFIG_MODEL_BY_TYPE, PipelineCreate, PipelineUpdate
 from app.services import audit_service
@@ -64,9 +64,53 @@ def _validate_step_shape(normalized: List[dict]) -> None:
         earlier.add(step["step_id"])
 
 
-def _validate_and_normalize_steps(steps_in: List[dict]) -> List[dict]:
+# execute_model fields the platform resolves at run time (tenant execution
+# config / EMR_ENTRYPOINT_S3_URI). Author-supplied values are rejected, not
+# ignored: silently dropping them would let someone believe they chose the
+# execution role.
+_PLATFORM_MANAGED_EM_FIELDS = ("emrApplicationId", "executionRoleArn", "entryPointS3Uri")
+
+# Which config fields must live under the tenant's dataS3Prefix, per step type.
+_TENANT_URI_FIELDS = {
+    "data_pipeline": ("destinationS3Uri",),
+    "execute_model": ("inputS3Uri", "outputS3Uri"),
+    "data_quality_check": ("inputS3Uri",),
+}
+
+
+def _validate_execute_model_step(idx: int, config: dict, tenant_id: str) -> None:
+    supplied = [f for f in _PLATFORM_MANAGED_EM_FIELDS if (config.get(f) or "").strip()]
+    if supplied:
+        raise bad_request(
+            f"Step {idx} ('execute_model'): {', '.join(supplied)} are platform-managed — "
+            "they are resolved from the tenant's execution config when the step runs "
+            "and cannot be set by pipeline authors"
+        )
+    model = model_repo.get_model(tenant_id, config["modelName"], config["modelVersion"])
+    if not model:
+        raise bad_request(
+            f"Step {idx} ('execute_model'): model '{config['modelName']}' "
+            f"v{config['modelVersion']} is not registered in this tenant — "
+            "register it via POST /models first"
+        )
+
+
+def _validate_tenant_uris(idx: int, step_type: str, config: dict, data_prefix: str) -> None:
+    for field in _TENANT_URI_FIELDS.get(step_type, ()):
+        value = config.get(field) or ""
+        if not value.startswith(data_prefix):
+            raise bad_request(
+                f"Step {idx} ('{step_type}'): {field} '{value}' is outside the tenant's "
+                f"data area — every pipeline S3 URI must start with '{data_prefix}'"
+            )
+
+
+def _validate_and_normalize_steps(steps_in: List[dict], tenant_id: str) -> List[dict]:
     if not steps_in:
         raise bad_request("Pipeline must have at least one step")
+
+    tenant = tenant_repo.get_tenant(tenant_id) or {}
+    data_prefix = (tenant.get("execution") or {}).get("dataS3Prefix")
 
     normalized = []
     for idx, step in enumerate(steps_in):
@@ -103,11 +147,21 @@ def _validate_and_normalize_steps(steps_in: List[dict]) -> List[dict]:
         )
 
     _validate_step_shape(normalized)
+
+    # Semantic gates after the structural ones (clearer errors: a malformed
+    # pipeline complains about its shape, not about a model lookup).
+    for idx, step in enumerate(normalized):
+        if step["type"] == "execute_model":
+            _validate_execute_model_step(idx, step["config"], tenant_id)
+        if data_prefix:
+            _validate_tenant_uris(idx, step["type"], step["config"], data_prefix)
     return normalized
 
 
 def create_pipeline(current_user: CurrentUser, data: PipelineCreate) -> dict:
-    steps = _validate_and_normalize_steps([s.model_dump() for s in data.steps])
+    steps = _validate_and_normalize_steps(
+        [s.model_dump() for s in data.steps], current_user.tenant_id
+    )
     now = datetime.now(timezone.utc).isoformat()
     pipeline_id = _gen_pipeline_id()
 
@@ -184,7 +238,9 @@ def update_pipeline(current_user: CurrentUser, pipeline_id: str, data: PipelineU
     if data.requiresApproval is not None:
         item["requiresApproval"] = data.requiresApproval
     if data.steps is not None:
-        item["steps"] = _validate_and_normalize_steps([s.model_dump() for s in data.steps])
+        item["steps"] = _validate_and_normalize_steps(
+            [s.model_dump() for s in data.steps], current_user.tenant_id
+        )
     if data.status is not None:
         if item["status"] == "draft" and data.status not in ("draft", "active"):
             raise bad_request("A draft pipeline may only move to 'active' (or stay 'draft')")

@@ -107,6 +107,7 @@ Every list endpoint returns `{"items": [...], "total": n, "page": n, "pageSize":
 | `GET /health` | none | liveness + `auditWriteFailures` (audit writes are best-effort by policy; a non-zero count means the audit trail has gaps — alarm on it or on the ERROR log line) |
 | `GET /auth/me` | any mapped role | current user `{user_id, email, name, role, tenant_id}` |
 | `POST /tenants`, `PATCH /tenants/{id}/suspend`, `.../reactivate` | PlatformAdmin | audit rows written under partition `PLATFORM` |
+| `PUT /tenants/{id}/execution` | PlatformAdmin | the tenant's platform-managed execution resources: EMR application id, job execution role, entrypoint override, and `dataS3Prefix` (every pipeline S3 URI must live under it) |
 | `GET /tenants`, `GET /tenants/{id}` | PlatformAdmin | admin console |
 | `POST/GET/DELETE /group-mappings` | PlatformAdmin | Entra group → role/tenant mappings (fallback only: convention-named `tms-*` groups resolve by name; the table covers service principals and exceptions) |
 | `POST /pipelines` | LeadDataScientist (own tenant) | steps validated as a discriminated union on `type` |
@@ -194,10 +195,49 @@ actual parquet scoring output binned into the baseline's bucket edges — see
 the resulting max PSI feeds the same warn/fail thresholds and the monitoring
 → approval closure below.
 
+## Run-scoped data layout
+
+Every run reads and writes its **own** S3 prefixes, resolved once when each
+step starts and recorded on the step as `resolved` (the evidence of exactly
+what the compute was told):
+
+```
+data_pipeline   unloads to  <destinationS3Uri>/<date>/<runId>/
+execute_model   reads       the unload's ACTUAL prefix (not static config)
+                writes to   <outputS3Uri>/<date>/<runId>/   (its resultsS3Prefix)
+data_quality    inspects    the execute_model step's ACTUAL resultsS3Prefix
+```
+
+Reruns and concurrent jobs of one pipeline therefore never overwrite each
+other, and the DQ evidence can never come from a stale or foreign run.
+
 ## Real execution modes
 
 Each switch is independent; the app **fails fast at startup** if a real mode
 is enabled without its required settings.
+
+**`EMR_MODE=real`** — the execute_model step submits a Spark job run to the
+tenant's EMR Serverless application. Which application, which job execution
+role, and which entrypoint are **platform-managed**: a PlatformAdmin sets
+them per tenant (`PUT /tenants/{id}/execution`; the entrypoint falls back to
+the platform-wide `EMR_ENTRYPOINT_S3_URI`), and pipeline authors supplying
+`emrApplicationId`/`executionRoleArn`/`entryPointS3Uri` get a 400 — letting
+authors choose what their code runs as would be privilege escalation. The
+step also requires its `(modelName, modelVersion)` to be **registered** (with
+an `artifactS3Uri`) in the tenant's registry — validated at pipeline
+create/update and again at run time. The submit contract (positional
+arguments `model-name model-version artifact-s3-uri input-s3-uri
+output-s3-uri`) is implemented by the reference entrypoint
+**`emr/scoring_entrypoint.py`** — upload it to S3 per release; its docstring
+documents the output contract the DQ engine relies on (all input columns
+preserved + a prediction column, unscorable rows kept with NULL predictions).
+Terraform: set `emr_application_arns` and `emr_execution_role_arns` (the task
+role gets `iam:PassRole` conditioned to `emr-serverless.amazonaws.com`).
+
+When a tenant's execution config includes **`dataS3Prefix`**, every S3 URI in
+that tenant's pipelines must live under it (validated at pipeline
+create/update) — combined with per-tenant execution roles, this is the
+tenant-isolation boundary for data and compute.
 
 **`SNOWFLAKE_MODE=real`** — the data_pipeline step runs a live, asynchronous
 `COPY INTO 's3://…'` unload (parquet) from the configured
@@ -327,6 +367,7 @@ See `.env.example` for the complete annotated list. Highlights:
 | `DEV_USER_ROLE` / `DEV_USER_TENANT_ID` | `LeadDataScientist` / `acme-capital` | local identity (restart to apply) |
 | `DDB_ENDPOINT_URL` | `http://localhost:5000` | moto in dev; leave empty for real AWS |
 | `EMR_MODE` / `SNOWFLAKE_MODE` / `DQ_MODE` | `mock` | in-process simulations; `real` = EMR Serverless / live Snowflake unloads / S3-parquet DQ engine (see "Real execution modes") |
+| `EMR_ENTRYPOINT_S3_URI` | empty | platform-wide default scoring entrypoint (per-tenant override via execution config) |
 | `SNOWFLAKE_ACCOUNT/USER/PRIVATE_KEY/STORAGE_INTEGRATION` | empty | required when `SNOWFLAKE_MODE=real` (startup-validated) |
 | `DQ_MAX_BYTES` | `536870912` | byte budget for reading scoring output in real DQ mode |
 | `EMR_MOCK_FAILURE_RATE` | `0.0` | fraction of mock EMR runs that fail (decided once at start) |
@@ -391,6 +432,8 @@ app/
   services/          business logic; emr/data-pipeline/data-quality mock-real splits
   routers/           HTTP endpoints
   core/              pagination + shared HTTP exceptions
+emr/                 scoring_entrypoint.py — the reference EMR Serverless batch-scoring
+                     job and the execute_model submit/output contract (upload to S3)
 scripts/             dev.py (local orchestrator), create_tables.py, seed_demo_data.py, test-api.sh
 tests/               pytest suite (in-process moto; see "Tests")
 iac/                 Terraform module: DynamoDB tables, IAM, ECS service

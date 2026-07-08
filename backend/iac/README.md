@@ -56,7 +56,9 @@ locked and monitoring snapshots are idempotent per run.
 |---|---|---|
 | `name_prefix` | `mlserv` | Resource/table name prefix; must match the app's `TABLE_*` settings |
 | `cluster_arn` | `""` (create one) | Deploy into an existing ECS cluster |
-| `emr_mode` | `mock` | `real` also attaches EMR Serverless job-run permissions to the task role |
+| `emr_mode` | `mock` | `real` also attaches EMR Serverless job-run permissions to the task role — requires `emr_application_arns` and `emr_execution_role_arns` |
+| `emr_application_arns` | `[]` | EMR Serverless application ARNs job runs may target (one per tenant, matching the tenants' execution config) |
+| `emr_execution_role_arns` | `[]` | Job execution roles the task role may `iam:PassRole` to EMR Serverless (one per tenant; these carry the tenant's S3 grants) |
 | `snowflake_mode` | `mock` | `real` runs live async COPY INTO unloads; supply `snowflake_parameter_arns` (SSM: account, user, private key PEM, storage integration) or the app refuses to start |
 | `dq_mode` | `mock` | `real` computes quality/drift evidence from the run's parquet scoring output on S3; supply `dq_s3_read_arns` (bucket + object ARNs) |
 | `extra_environment` | `{}` | Extra env vars (threshold overrides, `STEP_TIMEOUT_SECONDS`, ...) |

@@ -41,12 +41,11 @@ function defaultConfigFor(type: StepType): PipelineStep['config'] {
         destinationS3Uri: '',
       } satisfies DataPipelineConfig;
     case 'execute_model':
+      // EMR application/role/entrypoint are platform-managed (tenant
+      // execution config) — the backend rejects authored values.
       return {
         modelName: '',
         modelVersion: '',
-        emrApplicationId: '',
-        executionRoleArn: '',
-        entryPointS3Uri: '',
         inputS3Uri: '',
         outputS3Uri: '',
       } satisfies ExecuteModelConfig;

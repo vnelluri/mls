@@ -125,6 +125,29 @@ variable "dq_mode" {
   default     = "mock"
 }
 
+variable "emr_application_arns" {
+  description = <<-EOT
+    EMR Serverless application ARNs the platform may run jobs on — one per
+    tenant, matching each tenant's execution config (emrApplicationId set via
+    PUT /tenants/{id}/execution). Required when emr_mode = "real".
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "emr_execution_role_arns" {
+  description = <<-EOT
+    EMR job execution role ARNs the task role may pass to EMR Serverless
+    (iam:PassRole, conditioned to emr-serverless.amazonaws.com) — one per
+    tenant, matching each tenant's execution config (emrExecutionRoleArn).
+    These roles carry the S3 read (input/artifacts) and write (scoring
+    output) grants for their tenant's prefixes. Required when
+    emr_mode = "real".
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "snowflake_parameter_arns" {
   description = <<-EOT
     SSM parameter ARNs for the Snowflake SERVICE ACCOUNT the platform

@@ -22,6 +22,13 @@ class JobStepState(ApiModel):
     snowflakeQueryId: Optional[str] = None
     errorMessage: Optional[str] = None
     output: Optional[dict] = None
+    # Values the platform resolved when the step started, overlaid on
+    # `config` for every executor call: run-scoped S3 URIs (each run reads
+    # and writes its own <date>/<runId>/ prefixes) and, in real EMR mode, the
+    # tenant's EMR application/execution role and the model's artifact URI.
+    # Kept separate from the authored config so the evidence trail shows
+    # exactly what the compute was told, without mutating the snapshot.
+    resolved: Optional[dict] = None
     # NOTE: `config` is not in the original field list from the platform spec,
     # but is snapshotted here from the pipeline step at submit/retry time so
     # that step execution is correct and reproducible even if the parent

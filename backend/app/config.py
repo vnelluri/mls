@@ -57,6 +57,10 @@ class Settings(BaseSettings):
 
     # ---- Execution mode switches -----------------------------------------
     EMR_MODE: str = "mock"  # "mock" | "real"
+    # Platform-wide default Spark scoring entrypoint (see backend/emr/).
+    # Resolution order for an execute_model step: tenant execution config ->
+    # this default. Pipeline authors never choose the entrypoint.
+    EMR_ENTRYPOINT_S3_URI: str = ""
     SNOWFLAKE_MODE: str = "mock"  # "mock" | "real"
     DQ_MODE: str = "mock"  # "mock" | "real"
     EMR_MOCK_FAILURE_RATE: float = 0.0

@@ -73,8 +73,12 @@ resource "aws_iam_role_policy" "task_dynamodb" {
   policy = data.aws_iam_policy_document.task_dynamodb.json
 }
 
-# EMR Serverless permissions for EMR_MODE=real. Scoped to start/describe/
-# cancel job runs; attach only when the real executor is enabled.
+# EMR Serverless permissions for EMR_MODE=real, scoped to exactly the
+# per-tenant applications and job execution roles registered in the tenants'
+# execution config. StartJobRun carries an executionRoleArn, so the task role
+# also needs iam:PassRole on those roles — but ONLY toward the EMR Serverless
+# service: without the PassedToService condition, this permission would let
+# the API hand any listed role to any service.
 data "aws_iam_policy_document" "task_emr" {
   statement {
     sid = "EmrServerlessJobRuns"
@@ -83,7 +87,23 @@ data "aws_iam_policy_document" "task_emr" {
       "emr-serverless:GetJobRun",
       "emr-serverless:CancelJobRun",
     ]
-    resources = ["*"] # narrow to specific application ARNs per tenant setup
+    # Job-run ARNs are children of the application ARN.
+    resources = concat(
+      var.emr_application_arns,
+      [for arn in var.emr_application_arns : "${arn}/jobruns/*"],
+    )
+  }
+
+  statement {
+    sid       = "PassEmrJobExecutionRoles"
+    actions   = ["iam:PassRole"]
+    resources = var.emr_execution_role_arns
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["emr-serverless.amazonaws.com"]
+    }
   }
 }
 
@@ -92,6 +112,15 @@ resource "aws_iam_role_policy" "task_emr" {
   name   = "emr-serverless-job-runs"
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task_emr.json
+
+  lifecycle {
+    # Same fail-fast policy as the app: real mode with an empty allowlist
+    # would produce a policy that can start nothing (or, worse, tempt a "*").
+    precondition {
+      condition     = length(var.emr_application_arns) > 0 && length(var.emr_execution_role_arns) > 0
+      error_message = "emr_mode = \"real\" requires emr_application_arns and emr_execution_role_arns (one per tenant)."
+    }
+  }
 }
 
 # S3 read access for the real DQ engine (DQ_MODE=real): list + get on the

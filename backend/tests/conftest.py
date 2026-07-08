@@ -134,14 +134,13 @@ def dp_step():
 
 
 def em_step(model_name="scorer", model_version="1"):
+    # emrApplicationId / executionRoleArn / entryPointS3Uri are platform-managed
+    # (tenant execution config) — authoring them is rejected at pipeline create.
     return {
         "type": "execute_model",
         "config": {
             "modelName": model_name,
             "modelVersion": model_version,
-            "emrApplicationId": "app-1",
-            "executionRoleArn": "arn:aws:iam::1:role/r",
-            "entryPointS3Uri": "s3://bucket/entry.py",
             "inputS3Uri": "s3://bucket/in",
             "outputS3Uri": "s3://bucket/out",
         },
@@ -163,6 +162,23 @@ def approval_step():
 
 
 def create_pipeline(client, steps=None, name="test-pipeline"):
+    # Pipeline creation validates execute_model refs against the model
+    # registry, so make sure every referenced model exists (409 = already
+    # registered by the test itself, which is fine).
+    for step in steps or []:
+        if step.get("type") == "execute_model":
+            cfg = step["config"]
+            resp = client.post(
+                "/models",
+                json={
+                    "modelName": cfg["modelName"],
+                    "modelId": f"MDL-{cfg['modelName'].upper()}",
+                    "version": cfg["modelVersion"],
+                    "framework": "xgboost",
+                    "artifactS3Uri": f"s3://models/{cfg['modelName']}/{cfg['modelVersion']}.tar.gz",
+                },
+            )
+            assert resp.status_code in (201, 409), resp.text
     resp = client.post("/pipelines", json={"name": name, "steps": steps or [dp_step()]})
     assert resp.status_code == 201, resp.text
     return resp.json()

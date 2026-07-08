@@ -53,9 +53,15 @@ export interface DataPipelineConfig {
 export interface ExecuteModelConfig {
   modelName: string;
   modelVersion: string;
-  emrApplicationId: string;
-  executionRoleArn: string;
-  entryPointS3Uri: string;
+  /**
+   * Platform-managed: resolved from the tenant's execution config when the
+   * step runs. Present (read-only) on steps stored before the change; the
+   * backend rejects them on create/update, so authoring UIs must not send
+   * them.
+   */
+  emrApplicationId?: string;
+  executionRoleArn?: string;
+  entryPointS3Uri?: string;
   inputS3Uri: string;
   outputS3Uri: string;
   sparkSubmitParameters?: Record<string, string>;
@@ -118,6 +124,11 @@ export interface JobStepState {
   emrStateDetail?: string;
   errorMessage?: string;
   output?: Record<string, unknown>;
+  /**
+   * Values the platform resolved when the step started (run-scoped S3
+   * prefixes; in real EMR mode the tenant's emrApplicationId etc.).
+   */
+  resolved?: Record<string, unknown>;
 }
 
 export interface RunHistoryEntry {

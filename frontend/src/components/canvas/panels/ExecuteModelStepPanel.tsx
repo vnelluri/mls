@@ -83,29 +83,10 @@ export function ExecuteModelStepPanel({
           placeholder="1.0.0"
         />
       </Field>
-      <div className="grid grid-cols-2 gap-x-4">
-        <Field label="EMR application ID" required>
-          <Input
-            value={config.emrApplicationId}
-            onChange={(e) => update({ emrApplicationId: e.target.value })}
-            placeholder="00fkm1abc2d3ef4g"
-          />
-        </Field>
-        <Field label="Execution role ARN" required>
-          <Input
-            value={config.executionRoleArn}
-            onChange={(e) => update({ executionRoleArn: e.target.value })}
-            placeholder="arn:aws:iam::123456789012:role/emr-serverless-exec"
-          />
-        </Field>
-      </div>
-      <Field label="Entry point S3 URI" required>
-        <Input
-          value={config.entryPointS3Uri}
-          onChange={(e) => update({ entryPointS3Uri: e.target.value })}
-          placeholder="s3://tms-artifacts/jobs/entrypoint.py"
-        />
-      </Field>
+      <p className="mb-4 text-xs text-truist-darkGray">
+        The EMR application, execution role, and scoring entrypoint are managed by the platform for
+        your tenant — they are resolved automatically when the step runs.
+      </p>
       <div className="grid grid-cols-2 gap-x-4">
         <Field label="Input S3 URI" required>
           <Input

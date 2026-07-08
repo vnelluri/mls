@@ -185,19 +185,114 @@ def _elapsed_seconds(started_at_iso: str) -> float:
     return (datetime.now(timezone.utc) - started_at).total_seconds()
 
 
+def _service_config(step: dict) -> dict:
+    """The step's effective executor config: the pipeline-snapshotted config
+    overlaid with the values resolved at step start (run-scoped S3 URIs;
+    tenant EMR resources in real mode). Every executor call — start, poll,
+    cancel — must use this, not the raw config: the run's EMR application id
+    lives here, not in the authored config."""
+    return {**(step.get("config") or {}), **(step.get("resolved") or {})}
+
+
+def _run_scoped_prefix(base_uri: str, run_id: str) -> str:
+    """<base>/<YYYY-MM-DD>/<runId>/ — computed ONCE at step start and handed
+    to the executor, so the prefix the platform records is the prefix the
+    compute was actually told to use. Run-scoping is what lets reruns and
+    concurrent jobs of one pipeline never overwrite each other's data."""
+    return f"{base_uri.rstrip('/')}/{_now()[:10]}/{run_id}/"
+
+
+def _resolve_execute_model_config(item: dict, step: dict) -> dict:
+    """The `resolved` overlay for an execute_model step:
+
+      * inputS3Uri  — the upstream unload's ACTUAL output prefix (run-scoped),
+        so the model scores this run's extract, never a stale or foreign one;
+      * outputS3Uri — this run's own results prefix;
+      * real EMR mode only: the tenant's EMR application/execution role and
+        entrypoint (platform-managed — authors cannot choose what the code
+        runs as) and the registered model's artifactS3Uri.
+
+    Raises RuntimeError when real mode lacks its required resolution inputs —
+    the caller fails the step with the message."""
+    config = step.get("config") or {}
+    resolved: dict = {}
+
+    dp_step = next((s for s in item["steps"] if s["type"] == "data_pipeline"), None)
+    upstream_uri = ((dp_step or {}).get("output") or {}).get("s3Uri")
+    if upstream_uri:
+        resolved["inputS3Uri"] = upstream_uri
+    if config.get("outputS3Uri"):
+        resolved["outputS3Uri"] = _run_scoped_prefix(config["outputS3Uri"], item["run_id"])
+
+    if settings.EMR_MODE == "real":
+        execution = (tenant_repo.get_tenant(item["tenant_id"]) or {}).get("execution") or {}
+        app_id = execution.get("emrApplicationId") or config.get("emrApplicationId")
+        role_arn = execution.get("emrExecutionRoleArn") or config.get("executionRoleArn")
+        entrypoint = (
+            execution.get("entryPointS3Uri")
+            or config.get("entryPointS3Uri")
+            or settings.EMR_ENTRYPOINT_S3_URI
+        )
+        missing = [
+            name
+            for name, value in (
+                ("emrApplicationId", app_id),
+                ("emrExecutionRoleArn", role_arn),
+                ("entryPointS3Uri", entrypoint),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Tenant '{item['tenant_id']}' has no {', '.join(missing)} configured — "
+                "a PlatformAdmin must set the tenant's execution config "
+                "(PUT /tenants/{id}/execution) before its pipelines can run on EMR"
+            )
+        model = model_repo.get_model(
+            item["tenant_id"], config.get("modelName"), config.get("modelVersion")
+        )
+        if not model or not model.get("artifactS3Uri"):
+            raise RuntimeError(
+                f"Model '{config.get('modelName')}' v{config.get('modelVersion')} is not "
+                "registered with an artifact in this tenant — the scoring job has nothing to load"
+            )
+        resolved.update(
+            {
+                "emrApplicationId": app_id,
+                "executionRoleArn": role_arn,
+                "entryPointS3Uri": entrypoint,
+                "artifactS3Uri": model["artifactS3Uri"],
+            }
+        )
+    return resolved
+
+
 def _start_step(item: dict, step: dict) -> None:
     """Start a step. execute_model and data_pipeline kick off external
     compute (EMR run / Snowflake query) and are completed by status polls;
-    data_quality_check is timer-driven (STEP_DURATION_SECONDS)."""
+    data_quality_check is timer-driven (STEP_DURATION_SECONDS).
+
+    A resolution or submit failure fails the STEP (with the reason on it),
+    never escapes: an escaped exception would 500 the triggering request and
+    leave the job half-started."""
     step["status"] = "running"
     step["startedAt"] = _now()
-    if step["type"] == "execute_model":
-        result = get_emr_execution_service().start(step["config"])
-        step["emrJobRunId"] = result["emrJobRunId"]
-        step["emrStateDetail"] = "RUNNING"
-    elif step["type"] == "data_pipeline":
-        result = get_data_pipeline_service().start(step["config"])
-        step["snowflakeQueryId"] = result["queryId"]
+    try:
+        if step["type"] == "execute_model":
+            step["resolved"] = _resolve_execute_model_config(item, step)
+            result = get_emr_execution_service().start(_service_config(step))
+            step["emrJobRunId"] = result["emrJobRunId"]
+            step["emrStateDetail"] = "RUNNING"
+        elif step["type"] == "data_pipeline":
+            base = (step.get("config") or {}).get("destinationS3Uri")
+            if base:
+                step["resolved"] = {"destinationS3Uri": _run_scoped_prefix(base, item["run_id"])}
+            result = get_data_pipeline_service().start(_service_config(step))
+            step["snowflakeQueryId"] = result["queryId"]
+    except Exception as exc:
+        logger.exception("Failed to start %s step %s of job %s", step["type"], step["step_id"], item["job_id"])
+        _fail_step(item, step, f"Could not start step: {exc}")
+        return
     job_runner.start_step(item, step)
 
 
@@ -206,10 +301,12 @@ def _complete_execute_model_step(item: dict, step: dict, state_detail: str) -> N
     step["status"] = "succeeded"
     step["emrStateDetail"] = "SUCCESS"
     output = {"emrState": "SUCCESS", "emrStateDetail": state_detail}
-    # Results are partitioned per run: <outputS3Uri>/<date>/<runId>/.
-    out_uri = (step.get("config") or {}).get("outputS3Uri")
+    # The run-scoped prefix resolved at start — exactly what the executor was
+    # told to write to. (Steps started before the resolution change carry no
+    # overlay; their static configured URI is the honest fallback.)
+    out_uri = _service_config(step).get("outputS3Uri")
     if out_uri:
-        output["resultsS3Prefix"] = f"{out_uri.rstrip('/')}/{_now()[:10]}/{item['run_id']}/"
+        output["resultsS3Prefix"] = out_uri
     step["output"] = output
 
 
@@ -226,7 +323,7 @@ def _poll_emr_status(step: dict) -> dict:
     the backstop), never as step failure."""
     try:
         return get_emr_execution_service().get_status(
-            step.get("emrJobRunId") or "", step.get("startedAt"), step.get("config")
+            step.get("emrJobRunId") or "", step.get("startedAt"), _service_config(step)
         )
     except Exception:
         logger.exception("EMR status poll failed for run %s -- retrying next pass", step.get("emrJobRunId"))
@@ -238,7 +335,7 @@ def _cancel_emr_run(step: dict) -> None:
     if not step.get("emrJobRunId"):
         return
     try:
-        get_emr_execution_service().cancel(step["emrJobRunId"], step.get("config"))
+        get_emr_execution_service().cancel(step["emrJobRunId"], _service_config(step))
         step["emrStateDetail"] = "CANCELLING"
     except Exception:
         logger.exception("Failed to cancel EMR job run %s", step.get("emrJobRunId"))
@@ -249,7 +346,7 @@ def _cancel_pipeline_query(step: dict) -> None:
     if not step.get("snowflakeQueryId"):
         return
     try:
-        get_data_pipeline_service().cancel(step["snowflakeQueryId"], step.get("config"))
+        get_data_pipeline_service().cancel(step["snowflakeQueryId"], _service_config(step))
     except Exception:
         logger.exception("Failed to cancel Snowflake query %s", step.get("snowflakeQueryId"))
 
@@ -260,7 +357,7 @@ def _poll_pipeline_status(step: dict) -> dict:
     timeout is the backstop), never as step failure."""
     try:
         return get_data_pipeline_service().get_status(
-            step.get("snowflakeQueryId") or "", step.get("startedAt"), step.get("config")
+            step.get("snowflakeQueryId") or "", step.get("startedAt"), _service_config(step)
         )
     except Exception:
         logger.exception(
@@ -326,8 +423,17 @@ def _execute_data_quality_step(item: dict, step: dict) -> bool:
         except Exception:
             logger.exception("Could not fetch previous row count for job %s", item["job_id"])
 
+    # The DQ step inspects THIS run's scoring output: its configured
+    # inputS3Uri (the static output base) is overridden with the upstream
+    # execute_model step's actual run-scoped results prefix, so the evidence
+    # can never come from a stale or concurrent run.
+    exec_step = next((s for s in item["steps"] if s["type"] == "execute_model"), None)
+    results_prefix = ((exec_step or {}).get("output") or {}).get("resultsS3Prefix")
+    if results_prefix:
+        step["resolved"] = {**(step.get("resolved") or {}), "inputS3Uri": results_prefix}
+
     dq_result = get_data_quality_service().execute(
-        step["config"],
+        _service_config(step),
         drift_baseline=drift_baseline,
         drift_seed=drift_seed,
         previous_row_count=previous_row_count,
@@ -397,6 +503,8 @@ def _run_cascade(item: dict) -> None:
             step_type = step["type"]
             if step_type in RUNNABLE_STEP_TYPES:
                 _start_step(item, step)
+                if step["status"] == "failed":
+                    return  # resolution/submit failure — _fail_step set job status
                 item["status"] = "running"
                 return
             if step_type == "approval":
@@ -509,7 +617,7 @@ def _refresh_data_pipeline_step(item: dict, step: dict) -> Optional[bool]:
         step["completedAt"] = _now()
         step["status"] = "succeeded"
         step["output"] = pipeline_status.get("output") or {
-            "s3Uri": (step.get("config") or {}).get("destinationS3Uri")
+            "s3Uri": _service_config(step).get("destinationS3Uri")
         }
         job_runner.finish_step(item, step)
         _run_cascade(item)
@@ -997,6 +1105,8 @@ def _reset_step(step: dict) -> None:
     step["snowflakeQueryId"] = None
     step["errorMessage"] = None
     step["output"] = None
+    # Run-scoped resolution belongs to the ending run; the new run re-resolves.
+    step.pop("resolved", None)
 
 
 def resume_job(current_user: CurrentUser, job_id: str, tenant_id: Optional[str] = None) -> dict:
