@@ -1,0 +1,2 @@
+# Machine-local Claude Code settings (per-user permissions) -- never shared.
+.claude/settings.local.json

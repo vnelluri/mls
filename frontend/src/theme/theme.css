@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * NOTE on --truist-* / --status-* CSS custom properties:
+ * They are NOT hand-written here. They are generated at runtime from
+ * src/theme/tokens.ts (the single source of truth for the palette) via
+ * buildThemeCss() and injected into <head> as a <style> tag by
+ * src/theme/injectThemeVars.ts, called once from main.tsx before render.
+ * This guarantees tokens.ts and the CSS custom properties can never drift,
+ * without needing a Node-side TS-to-CSS build step. See that file for
+ * details. Everything below is ordinary global/base styling.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--truist-tint08, #f6f3f9);
+  color: var(--truist-charcoal, #34363b);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--truist-sky-blue, #b0e0e2);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--truist-purple, #2e1a47);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--truist-light-gray, #c9c9c9);
+  border-radius: 6px;
+}

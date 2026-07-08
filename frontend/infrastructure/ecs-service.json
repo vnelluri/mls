@@ -1,0 +1,27 @@
+{
+  "serviceName": "ml-serving-monitoring-frontend",
+  "cluster": "<CLUSTER_NAME>",
+  "taskDefinition": "ml-serving-monitoring-frontend",
+  "desiredCount": 2,
+  "launchType": "FARGATE",
+  "platformVersion": "LATEST",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["<SUBNET_ID_1>", "<SUBNET_ID_2>"],
+      "securityGroups": ["<SECURITY_GROUP_ID>"],
+      "assignPublicIp": "DISABLED"
+    }
+  },
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:<REGION>:<ACCOUNT_ID>:targetgroup/ml-serving-monitoring-frontend/<ID>",
+      "containerName": "frontend",
+      "containerPort": 80
+    }
+  ],
+  "deploymentConfiguration": {
+    "maximumPercent": 200,
+    "minimumHealthyPercent": 100
+  },
+  "healthCheckGracePeriodSeconds": 30
+}

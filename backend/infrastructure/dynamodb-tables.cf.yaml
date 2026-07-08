@@ -1,0 +1,278 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  ML Serving & Monitoring Platform -- all 7 DynamoDB tables and their GSIs.
+  PAY_PER_REQUEST billing throughout. Attribute names mirror
+  backend/scripts/create_tables.py exactly.
+
+Resources:
+  TenantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-tenants
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: tenant_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  GroupMappingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-group-mappings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: group_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: group_id
+          KeyType: HASH
+
+  PipelinesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-pipelines
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: pipeline_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: updatedAt
+          AttributeType: S
+        - AttributeName: all_pk
+          AttributeType: S
+        - AttributeName: all_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: pipeline_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: updatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: all-index
+          KeySchema:
+            - AttributeName: all_pk
+              KeyType: HASH
+            - AttributeName: all_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: job_id
+          AttributeType: S
+        - AttributeName: run_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: submittedAt
+          AttributeType: S
+        - AttributeName: all_pk
+          AttributeType: S
+        - AttributeName: all_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: job_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: run-id-index
+          KeySchema:
+            - AttributeName: run_id
+              KeyType: HASH
+            - AttributeName: tenant_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: submittedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: all-index
+          KeySchema:
+            - AttributeName: all_pk
+              KeyType: HASH
+            - AttributeName: all_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  ModelsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-models
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: stage
+          AttributeType: S
+        - AttributeName: stage_sk
+          AttributeType: S
+        - AttributeName: all_pk
+          AttributeType: S
+        - AttributeName: all_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # name-index (model_name, version) was removed: never queried, and
+        # keyed without a tenant so any consumer would leak across tenants.
+        - IndexName: stage-index
+          KeySchema:
+            - AttributeName: stage
+              KeyType: HASH
+            - AttributeName: stage_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: all-index
+          KeySchema:
+            - AttributeName: all_pk
+              KeyType: HASH
+            - AttributeName: all_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  MonitoringSnapshotsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-monitoring-snapshots
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: model_trend_pk
+          AttributeType: S
+        - AttributeName: recordedAt
+          AttributeType: S
+        - AttributeName: derivedStatus
+          AttributeType: S
+        - AttributeName: all_pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: model-trend-index
+          KeySchema:
+            - AttributeName: model_trend_pk
+              KeyType: HASH
+            - AttributeName: recordedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: derivedStatus
+              KeyType: HASH
+            - AttributeName: recordedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: all-index
+          KeySchema:
+            - AttributeName: all_pk
+              KeyType: HASH
+            - AttributeName: recordedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mlserv-audit
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: actor
+          AttributeType: S
+        - AttributeName: entity_pk
+          AttributeType: S
+        - AttributeName: event_date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: actor-index
+          KeySchema:
+            - AttributeName: actor
+              KeyType: HASH
+            - AttributeName: sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: entity-index
+          KeySchema:
+            - AttributeName: entity_pk
+              KeyType: HASH
+            - AttributeName: sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: all-index
+          KeySchema:
+            - AttributeName: event_date
+              KeyType: HASH
+            - AttributeName: sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+Outputs:
+  TenantsTableArn:
+    Value: !GetAtt TenantsTable.Arn
+  JobsTableArn:
+    Value: !GetAtt JobsTable.Arn
