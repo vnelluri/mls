@@ -34,10 +34,7 @@ function defaultConfigFor(type: StepType): PipelineStep['config'] {
     case 'data_pipeline':
       return {
         sourceType: 'snowflake',
-        snowflakeDatabase: '',
-        snowflakeSchema: '',
-        snowflakeTable: '',
-        snowflakeWarehouse: '',
+        snowflakeParams: {},
         destinationS3Uri: '',
       } satisfies DataPipelineConfig;
     case 'execute_model':

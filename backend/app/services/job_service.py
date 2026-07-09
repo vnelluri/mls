@@ -6,15 +6,25 @@ order snapshotted from the pipeline at submit time:
 
     data_pipeline -> execute_model -> data_quality_check -> [approval]
 
-Steps execute one at a time. data_pipeline (Snowflake unload) and
-execute_model (EMR run) start external compute and are completed by status
-polls on each refresh pass (the detail-page GET or the background loop);
-data_quality_check is timer-driven (STEP_DURATION_SECONDS in mock mode) and
-produces its output at completion. No thread is ever held while a step
-"runs" — long external work is polled, never awaited.
+Steps execute one at a time. data_pipeline and execute_model start external
+compute and are completed by status polls on each refresh pass (the
+detail-page GET or the background loop); data_quality_check is timer-driven
+(STEP_DURATION_SECONDS in mock mode) and produces its output at completion.
+No thread is ever held while a step "runs" — long external work is polled,
+never awaited.
+
+A data_pipeline step is backed by ONE of two executors, chosen by its
+config: the built-in Snowflake unload (data_pipeline_service) normally, or —
+when the step's config carries a `scriptS3Uri` — the author's own script,
+submitted to EMR Serverless exactly like an execute_model run
+(`_is_script_backed`/`_is_emr_backed` below select the poller/canceller).
+Either way the step's `output.s3Uri` ends up in the same shape, so
+downstream steps (execute_model's input resolution) don't need to know or
+care which executor produced it.
 """
 import copy
 import hashlib
+import json
 import logging
 import random
 import string
@@ -58,6 +68,20 @@ def _idempotent_job_id(tenant_id: str, idempotency_key: str) -> str:
     return f"job-{digest[:12]}"
 
 
+def _is_script_backed(step: dict) -> bool:
+    """A data_pipeline step whose config carries scriptS3Uri runs on EMR
+    Serverless (the author's own script) instead of the built-in Snowflake
+    COPY INTO unload."""
+    return step["type"] == "data_pipeline" and bool((step.get("config") or {}).get("scriptS3Uri"))
+
+
+def _is_emr_backed(step: dict) -> bool:
+    """Every step type driven by the EMR executor (job-run id, EMR status
+    polling/cancellation): execute_model always, data_pipeline only when
+    script-backed."""
+    return step["type"] == "execute_model" or _is_script_backed(step)
+
+
 def _cancel_emr_runs_lost_to_race(item: dict) -> None:
     """Our job write lost the optimistic lock AFTER we may have started
     external compute (EMR runs, Snowflake unloads) for cascade-advanced
@@ -75,7 +99,7 @@ def _cancel_emr_runs_lost_to_race(item: dict) -> None:
     persisted_query_ids = {s.get("snowflakeQueryId") for s in fresh_steps}
     for step in item["steps"]:
         run_id = step.get("emrJobRunId")
-        if step["type"] == "execute_model" and run_id and run_id not in persisted_run_ids:
+        if _is_emr_backed(step) and run_id and run_id not in persisted_run_ids:
             logger.warning("Cancelling orphaned EMR run %s (job %s lost a write race)", run_id, item["job_id"])
             _cancel_emr_run(step)
         query_id = step.get("snowflakeQueryId")
@@ -262,6 +286,72 @@ def _resolve_execute_model_config(item: dict, step: dict) -> dict:
                 "executionRoleArn": role_arn,
                 "entryPointS3Uri": entrypoint,
                 "artifactS3Uri": model["artifactS3Uri"],
+                # scoring_entrypoint.py's positional contract: model-name
+                # model-version artifact-s3-uri input-s3-uri output-s3-uri.
+                "sparkArguments": [
+                    config.get("modelName"),
+                    str(config.get("modelVersion")),
+                    model["artifactS3Uri"],
+                    resolved.get("inputS3Uri", ""),
+                    resolved.get("outputS3Uri", ""),
+                ],
+            }
+        )
+    return resolved
+
+
+def _resolve_data_pipeline_script_config(item: dict, step: dict) -> dict:
+    """The `resolved` overlay for a script-backed data_pipeline step (its
+    config carries scriptS3Uri): the script itself is the EMR entryPoint —
+    unlike execute_model, the pipeline author chooses exactly what code
+    runs here, since no model-registry artifact stands in for it. Only the
+    EMR application/execution role stay platform-managed (tenant execution
+    config); the run-scoped output prefix and the script's arguments are
+    computed here.
+
+    Script contract (entryPointArguments, positional):
+        snowflake-params-json   this step's snowflakeParams, JSON-encoded —
+                                 opaque to the platform, entirely up to the
+                                 script to interpret (e.g. connect via
+                                 Snowpark for Python using its own
+                                 credentials/secrets lookup)
+        output-s3-uri            this run's own results prefix — the script
+                                 must write here; downstream steps read
+                                 exactly this step's `output.s3Uri`
+
+    Raises RuntimeError when real mode lacks its required resolution inputs
+    — the caller fails the step with the message."""
+    config = step.get("config") or {}
+    resolved: dict = {"entryPointS3Uri": config.get("scriptS3Uri")}
+
+    if config.get("destinationS3Uri"):
+        resolved["outputS3Uri"] = _run_scoped_prefix(config["destinationS3Uri"], item["run_id"])
+
+    if settings.EMR_MODE == "real":
+        execution = (tenant_repo.get_tenant(item["tenant_id"]) or {}).get("execution") or {}
+        app_id = execution.get("emrApplicationId")
+        role_arn = execution.get("emrExecutionRoleArn")
+        missing = [
+            name for name, value in (
+                ("emrApplicationId", app_id),
+                ("emrExecutionRoleArn", role_arn),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Tenant '{item['tenant_id']}' has no {', '.join(missing)} configured — "
+                "a PlatformAdmin must set the tenant's execution config "
+                "(PUT /tenants/{id}/execution) before its pipelines can run on EMR"
+            )
+        resolved.update(
+            {
+                "emrApplicationId": app_id,
+                "executionRoleArn": role_arn,
+                "sparkArguments": [
+                    json.dumps(config.get("snowflakeParams") or {}),
+                    resolved.get("outputS3Uri", ""),
+                ],
             }
         )
     return resolved
@@ -280,6 +370,11 @@ def _start_step(item: dict, step: dict) -> None:
     try:
         if step["type"] == "execute_model":
             step["resolved"] = _resolve_execute_model_config(item, step)
+            result = get_emr_execution_service().start(_service_config(step))
+            step["emrJobRunId"] = result["emrJobRunId"]
+            step["emrStateDetail"] = "RUNNING"
+        elif _is_script_backed(step):
+            step["resolved"] = _resolve_data_pipeline_script_config(item, step)
             result = get_emr_execution_service().start(_service_config(step))
             step["emrJobRunId"] = result["emrJobRunId"]
             step["emrStateDetail"] = "RUNNING"
@@ -308,6 +403,21 @@ def _complete_execute_model_step(item: dict, step: dict, state_detail: str) -> N
     if out_uri:
         output["resultsS3Prefix"] = out_uri
     step["output"] = output
+
+
+def _complete_script_data_pipeline_step(item: dict, step: dict, state_detail: str) -> None:
+    """A script-backed data_pipeline step's EMR run reported SUCCESS. Its
+    output keeps the SAME `s3Uri` key the built-in Snowflake unload path
+    produces, so execute_model's upstream-input resolution doesn't need to
+    know which executor ran this step."""
+    step["completedAt"] = _now()
+    step["status"] = "succeeded"
+    step["emrStateDetail"] = "SUCCESS"
+    step["output"] = {
+        "s3Uri": _service_config(step).get("outputS3Uri"),
+        "emrState": "SUCCESS",
+        "emrStateDetail": state_detail,
+    }
 
 
 def _fail_step(item: dict, step: dict, message: str) -> None:
@@ -567,8 +677,9 @@ def _complete_step(item: dict, step: dict) -> None:
     job_runner.finish_step(item, step)
 
 
-def _refresh_execute_model_step(item: dict, step: dict) -> Optional[bool]:
-    """Advance a running execute_model step from the EMR executor's actual
+def _refresh_emr_backed_step(item: dict, step: dict) -> Optional[bool]:
+    """Advance a running EMR-backed step — execute_model, or a script-backed
+    data_pipeline (see `_is_emr_backed`) — from the EMR executor's actual
     job-run state (SUCCESS completes it, FAILED/CANCELLED fails the job,
     anything else keeps it running). Returns True if the item was mutated,
     False if not, and None if another writer already advanced this run (the
@@ -579,7 +690,11 @@ def _refresh_execute_model_step(item: dict, step: dict) -> Optional[bool]:
     if state == "SUCCESS":
         if not _still_running_in_db(item, step["step_id"]):
             return None
-        _complete_execute_model_step(item, step, emr_status.get("stateDetail") or "Job run completed")
+        detail = emr_status.get("stateDetail") or "Job run completed"
+        if step["type"] == "execute_model":
+            _complete_execute_model_step(item, step, detail)
+        else:
+            _complete_script_data_pipeline_step(item, step, detail)
         job_runner.finish_step(item, step)
         _run_cascade(item)
         return True
@@ -637,12 +752,14 @@ def _refresh_data_pipeline_step(item: dict, step: dict) -> Optional[bool]:
 
 
 def _refresh_running_steps(item: dict) -> bool:
-    """Advances every `running` step: execute_model and data_pipeline from
-    their executors' reported state, the timer-driven data_quality_check once
-    STEP_DURATION_SECONDS has elapsed. Any step past STEP_TIMEOUT_SECONDS is
-    failed outright (with a best-effort cancel of its external compute) so a
-    stuck executor can't strand the job in `running` forever. Returns True if
-    the job item was mutated (caller should persist)."""
+    """Advances every `running` step: EMR-backed steps (execute_model, or a
+    script-backed data_pipeline) and the built-in Snowflake data_pipeline
+    unload from their executors' reported state, the timer-driven
+    data_quality_check once STEP_DURATION_SECONDS has elapsed. Any step past
+    STEP_TIMEOUT_SECONDS is failed outright (with a best-effort cancel of
+    its external compute) so a stuck executor can't strand the job in
+    `running` forever. Returns True if the job item was mutated (caller
+    should persist)."""
     changed = False
     # Only steps already running when this pass began are eligible to
     # complete here; a step the cascade starts mid-pass waits for the next
@@ -661,7 +778,7 @@ def _refresh_running_steps(item: dict) -> bool:
         if elapsed >= settings.STEP_TIMEOUT_SECONDS:
             if not _still_running_in_db(item, step["step_id"]):
                 return False  # another writer already advanced this run
-            if step["type"] == "execute_model":
+            if _is_emr_backed(step):
                 _cancel_emr_run(step)
             elif step["type"] == "data_pipeline":
                 _cancel_pipeline_query(step)
@@ -673,8 +790,8 @@ def _refresh_running_steps(item: dict) -> bool:
             changed = True
             continue
 
-        if step["type"] == "execute_model":
-            result = _refresh_execute_model_step(item, step)
+        if _is_emr_backed(step):
+            result = _refresh_emr_backed_step(item, step)
             if result is None:
                 return False  # another writer already advanced this run
             changed = changed or result
@@ -1050,7 +1167,7 @@ def stop_job(current_user: CurrentUser, job_id: str, tenant_id: Optional[str] = 
     for step in item["steps"]:
         if step["status"] != "running":
             continue
-        if step["type"] == "execute_model":
+        if _is_emr_backed(step):
             _cancel_emr_run(step)
         elif step["type"] == "data_pipeline":
             _cancel_pipeline_query(step)

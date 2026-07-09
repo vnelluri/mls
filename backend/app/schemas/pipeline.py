@@ -1,6 +1,7 @@
-from typing import Dict, List, Literal, Optional, Union
+import re
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import ApiModel
 
@@ -15,13 +16,67 @@ PipelineEnvironment = Literal["staging", "production"]
 
 # ---- Step config shapes (discriminated union on `type`) --------------------
 
+# Unquoted-style Snowflake identifiers only (letters, digits, _, $; must not
+# start with a digit) — this is the early, authoring-time copy of the same
+# pattern data_pipeline_service.build_unload_sql enforces again at execution
+# time (the authoritative SQL-injection guard); the two must stay identical.
+_SNOWFLAKE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+# Keys snowflakeParams must carry to build the platform's COPY INTO unload.
+_SNOWFLAKE_COPY_KEYS = ("database", "schema", "table", "warehouse")
+
+
 class DataPipelineConfig(ApiModel):
     sourceType: Literal["snowflake"] = "snowflake"
-    snowflakeDatabase: str
-    snowflakeSchema: str
-    snowflakeTable: str
-    snowflakeWarehouse: str
+    # Every Snowflake-specific parameter as one JSON object, e.g.
+    # {"database": "ANALYTICS_DB", "schema": "RISK", "table": "CUSTOMER_FEATURES",
+    #  "warehouse": "COMPUTE_WH"}. With no scriptS3Uri, database/schema/table/
+    # warehouse are REQUIRED (validated below) and drive the platform's own
+    # COPY INTO unload; extra keys are accepted and simply unused. With
+    # scriptS3Uri set, this object is opaque to the platform — handed to the
+    # script verbatim as a JSON string (job_service.
+    # _resolve_data_pipeline_script_config) — its shape is entirely up to
+    # the script.
+    snowflakeParams: Dict[str, Any] = Field(default_factory=dict)
     destinationS3Uri: str
+    # Optional: an S3 script (Spark, e.g. via Snowpark for Python) that
+    # REPLACES the platform's built-in COPY INTO unload — submitted to the
+    # tenant's EMR Serverless application as the job's entryPoint. Unlike
+    # execute_model's EMR fields, this is author-supplied: the script *is*
+    # the pipeline author's own code, so nothing about which script runs is
+    # platform-managed — only which EMR application/role it runs under
+    # (resolved from the tenant's execution config, same as execute_model).
+    scriptS3Uri: Optional[str] = None
+
+    @field_validator("scriptS3Uri")
+    @classmethod
+    def _script_uri_shape(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.startswith("s3://"):
+            raise ValueError("scriptS3Uri must be an s3:// URI")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_snowflake_params(self) -> "DataPipelineConfig":
+        if self.scriptS3Uri:
+            return self  # opaque to the platform; the script owns its own validation
+        missing = [
+            k for k in _SNOWFLAKE_COPY_KEYS
+            if not str(self.snowflakeParams.get(k) or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"snowflakeParams must include {missing} when no scriptS3Uri is set "
+                "(they build the platform's COPY INTO unload)"
+            )
+        invalid = [
+            k for k in _SNOWFLAKE_COPY_KEYS
+            if not _SNOWFLAKE_IDENTIFIER_RE.match(str(self.snowflakeParams[k]))
+        ]
+        if invalid:
+            raise ValueError(
+                f"snowflakeParams{invalid} must be valid Snowflake identifiers "
+                "(letters, digits, _ and $ only, must not start with a digit)"
+            )
+        return self
 
 
 class ExecuteModelConfig(ApiModel):

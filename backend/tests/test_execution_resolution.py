@@ -1,14 +1,17 @@
 """Phase-1 execution contract: platform-managed EMR fields, model-registry
 validation, tenant data-prefix enforcement, per-tenant execution config, and
 run-scoped S3 URI resolution through the step cascade."""
+import json
+
 import pytest
 
 from app.config import settings
 from app.repositories import model_repo, tenant_repo
-from app.services.job_service import _resolve_execute_model_config
+from app.services.job_service import _resolve_data_pipeline_script_config, _resolve_execute_model_config
 from tests.conftest import (
     advance,
     create_pipeline,
+    dp_script_step,
     dp_step,
     dq_step,
     em_step,
@@ -229,3 +232,100 @@ def test_real_mode_requires_registered_artifact(aws, monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         _resolve_execute_model_config(_job_item([step]), step)
     assert "not registered" in str(exc.value)
+
+
+# ---- script-backed data_pipeline: replaces the unload, runs on EMR ----------
+
+def test_script_backed_step_runs_on_emr_not_snowflake(client, identity, fixed_dq):
+    fixed_dq()
+    pipeline = create_pipeline(client, steps=[dp_script_step(), em_step(), dq_step()])
+    job = submit_and_start(client, pipeline["pipelineId"])
+    dp = job["steps"][0]
+    assert dp["status"] == "running"
+    assert dp["emrJobRunId"] is not None
+    assert dp.get("snowflakeQueryId") is None
+
+    job = advance(client, job["jobId"])
+    assert job["status"] == "success", job
+    dp, em, dq = job["steps"]
+    # Same output shape the built-in Snowflake unload produces -- downstream
+    # (execute_model's input resolution) doesn't need to know which executor
+    # actually ran this step.
+    assert dp["output"]["s3Uri"].startswith("s3://bucket/in/")
+    assert dp["output"]["s3Uri"].endswith(f"/{job['runId']}/")
+    assert em["resolved"]["inputS3Uri"] == dp["output"]["s3Uri"]
+
+
+def test_script_backed_step_stop_cancels_emr_not_snowflake(client, identity, monkeypatch):
+    from app.services import data_pipeline_service as dps
+    from app.services import emr_execution_service as emr
+
+    emr_cancelled = []
+    sf_cancelled = []
+    monkeypatch.setattr(
+        emr.MockEmrExecutionService, "cancel",
+        lambda self, run_id, step_config=None: emr_cancelled.append(run_id),
+    )
+    monkeypatch.setattr(
+        dps.MockDataPipelineService, "cancel",
+        lambda self, query_id, step_config=None: sf_cancelled.append(query_id),
+    )
+    pipeline = create_pipeline(client, steps=[dp_script_step()])
+    job = submit_and_start(client, pipeline["pipelineId"])
+    run_id = job["steps"][0]["emrJobRunId"]
+
+    resp = client.post(f"/jobs/{job['jobId']}/stop")
+    assert resp.status_code == 200, resp.text
+    assert emr_cancelled == [run_id]
+    assert sf_cancelled == []
+
+
+def _dp_script_job_step(script_uri="s3://mlserv-data/acme/scripts/extract.py"):
+    return {
+        "step_id": "step-1",
+        "type": "data_pipeline",
+        "config": {
+            "snowflakeParams": {"database": "DB", "schema": "SCH", "table": "T"},
+            "destinationS3Uri": "s3://mlserv-data/acme/staging",
+            "scriptS3Uri": script_uri,
+        },
+    }
+
+
+def test_script_resolution_requires_tenant_execution_config(aws, monkeypatch):
+    monkeypatch.setattr(settings, "EMR_MODE", "real")
+    tenant_repo.put_tenant({"tenant_id": "acme", "name": "Acme", "status": "active"})
+    step = _dp_script_job_step()
+    with pytest.raises(RuntimeError) as exc:
+        _resolve_data_pipeline_script_config(_job_item([step]), step)
+    assert "emrApplicationId" in str(exc.value)
+    assert "execution config" in str(exc.value)
+
+
+def test_script_resolution_uses_own_entrypoint_and_json_params(aws, monkeypatch):
+    monkeypatch.setattr(settings, "EMR_MODE", "real")
+    tenant_repo.put_tenant(
+        {
+            "tenant_id": "acme",
+            "name": "Acme",
+            "status": "active",
+            "execution": {
+                "emrApplicationId": "00fabc",
+                "emrExecutionRoleArn": "arn:aws:iam::1:role/acme-emr",
+                # The tenant's DEFAULT entrypoint (used by execute_model) must
+                # NOT leak into a script-backed data_pipeline step -- the
+                # script itself is the entrypoint, chosen by the author.
+                "entryPointS3Uri": "s3://mlserv-platform/entrypoints/scoring_entrypoint.py",
+            },
+        }
+    )
+    step = _dp_script_job_step()
+    resolved = _resolve_data_pipeline_script_config(_job_item([step]), step)
+    assert resolved["entryPointS3Uri"] == step["config"]["scriptS3Uri"]
+    assert resolved["emrApplicationId"] == "00fabc"
+    assert resolved["executionRoleArn"] == "arn:aws:iam::1:role/acme-emr"
+    assert resolved["outputS3Uri"].startswith("s3://mlserv-data/acme/staging/")
+    assert resolved["outputS3Uri"].endswith("/RUN-0001/")
+    params_json, output_uri = resolved["sparkArguments"]
+    assert json.loads(params_json) == {"database": "DB", "schema": "SCH", "table": "T"}
+    assert output_uri == resolved["outputS3Uri"]

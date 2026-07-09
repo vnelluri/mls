@@ -82,9 +82,12 @@ def dp_step(step_id, table, dest):
     return {
         "step_id": step_id, "type": "data_pipeline", "dependsOn": [],
         "config": {
-            "sourceType": "snowflake", "snowflakeDatabase": "FIN_DW",
-            "snowflakeSchema": "SCORING", "snowflakeTable": table,
-            "snowflakeWarehouse": "SCORING_WH", "destinationS3Uri": dest,
+            "sourceType": "snowflake",
+            "snowflakeParams": {
+                "database": "FIN_DW", "schema": "SCORING",
+                "table": table, "warehouse": "SCORING_WH",
+            },
+            "destinationS3Uri": dest,
         },
     }
 

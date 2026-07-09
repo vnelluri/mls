@@ -2,6 +2,7 @@
 from tests.conftest import (
     approval_step,
     create_pipeline,
+    dp_script_step,
     dp_step,
     dq_step,
     em_step,
@@ -57,6 +58,68 @@ def test_blank_dq_check_name_rejected(client, identity):
     bad_dq["config"]["checks"][0]["name"] = "  "
     resp = client.post("/pipelines", json={"name": "bad", "steps": [bad_dq]})
     assert resp.status_code == 400
+
+
+# ---- data_pipeline: snowflakeParams JSON + scriptS3Uri ----------------------
+
+def test_snowflake_params_missing_keys_rejected(client, identity):
+    step = dp_step()
+    del step["config"]["snowflakeParams"]["warehouse"]
+    resp = client.post("/pipelines", json={"name": "bad", "steps": [step]})
+    assert resp.status_code == 400
+    assert "warehouse" in resp.json()["detail"]
+
+
+def test_snowflake_params_invalid_identifier_rejected(client, identity):
+    step = dp_step()
+    step["config"]["snowflakeParams"]["table"] = "T'); DROP TABLE X; --"
+    resp = client.post("/pipelines", json={"name": "bad", "steps": [step]})
+    assert resp.status_code == 400
+    assert "identifier" in resp.json()["detail"]
+
+
+def test_snowflake_params_extra_keys_allowed(client, identity):
+    step = dp_step()
+    step["config"]["snowflakeParams"]["role"] = "SOME_ROLE"
+    resp = client.post("/pipelines", json={"name": "ok", "steps": [step]})
+    assert resp.status_code == 201
+    assert resp.json()["steps"][0]["config"]["snowflakeParams"]["role"] == "SOME_ROLE"
+
+
+def test_script_backed_step_skips_snowflake_params_requirement(client, identity):
+    # No database/schema/table/warehouse at all -- fine, the script owns it.
+    step = dp_script_step()
+    step["config"]["snowflakeParams"] = {"anything": "goes"}
+    resp = client.post("/pipelines", json={"name": "ok", "steps": [step]})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["steps"][0]["config"]["scriptS3Uri"] == step["config"]["scriptS3Uri"]
+
+
+def test_script_uri_must_be_s3(client, identity):
+    step = dp_script_step()
+    step["config"]["scriptS3Uri"] = "https://example.com/script.py"
+    resp = client.post("/pipelines", json={"name": "bad", "steps": [step]})
+    assert resp.status_code == 400
+    assert "s3://" in resp.json()["detail"]
+
+
+def test_script_uri_outside_tenant_prefix_rejected(client, identity):
+    identity(role="PlatformAdmin", tenant=None)
+    assert client.post(
+        "/tenants",
+        json={"tenantId": "acme", "name": "Acme", "execution": {"dataS3Prefix": "s3://mlserv-data/acme/"}},
+    ).status_code == 201
+
+    identity(role="LeadDataScientist", tenant="acme")
+    step = dp_script_step(script_s3_uri="s3://someone-elses-bucket/script.py")
+    step["config"]["destinationS3Uri"] = "s3://mlserv-data/acme/staging"
+    resp = client.post("/pipelines", json={"name": "bad", "steps": [step]})
+    assert resp.status_code == 400
+    assert "outside the tenant's data area" in resp.json()["detail"]
+
+    step["config"]["scriptS3Uri"] = "s3://mlserv-data/acme/scripts/extract.py"
+    resp = client.post("/pipelines", json={"name": "ok", "steps": [step]})
+    assert resp.status_code == 201, resp.text
 
 
 def test_update_bumps_version(client, identity):

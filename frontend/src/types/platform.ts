@@ -43,11 +43,22 @@ export type MonitoringStatus =
 
 export interface DataPipelineConfig {
   sourceType: 'snowflake';
-  snowflakeDatabase: string;
-  snowflakeSchema: string;
-  snowflakeTable: string;
-  snowflakeWarehouse: string;
+  /**
+   * Every Snowflake-specific parameter as one JSON object, e.g.
+   * { database, schema, table, warehouse }. Required (those four keys) when
+   * scriptS3Uri is unset — they build the platform's COPY INTO unload;
+   * with scriptS3Uri set, this object is opaque to the platform and handed
+   * to the script verbatim.
+   */
+  snowflakeParams: Record<string, unknown>;
   destinationS3Uri: string;
+  /**
+   * Optional: an S3 script (Spark, e.g. via Snowpark for Python) that
+   * REPLACES the built-in COPY INTO unload — submitted to the tenant's EMR
+   * Serverless application instead. Author-supplied, unlike execute_model's
+   * EMR fields.
+   */
+  scriptS3Uri?: string;
 }
 
 export interface ExecuteModelConfig {

@@ -108,14 +108,21 @@ class RealEmrExecutionService(EmrExecutionService):
         self._client = boto3.client("emr-serverless", region_name=settings.AWS_REGION)
 
     def start(self, step_config: dict) -> dict:
-        """`step_config` is the RESOLVED config (job_service._service_config):
-        emrApplicationId / executionRoleArn / entryPointS3Uri come from the
-        tenant's execution config, artifactS3Uri from the model registry, and
-        inputS3Uri / outputS3Uri are this run's own prefixes.
+        """`step_config` is the RESOLVED config (job_service._service_config).
+        emrApplicationId / executionRoleArn always come from the tenant's
+        execution config; entryPointS3Uri and the positional
+        `sparkArguments` list are step-type-specific, built by the caller
+        (job_service) — this service stays agnostic to what's actually
+        running:
 
-        The argument list is the scoring-entrypoint contract — see
-        backend/emr/scoring_entrypoint.py, which consumes it positionally:
-            model-name  model-version  artifact-s3-uri  input-s3-uri  output-s3-uri
+          * execute_model  — entryPointS3Uri is the platform's scoring
+            entrypoint (backend/emr/scoring_entrypoint.py), sparkArguments =
+            [model-name, model-version, artifact-s3-uri, input-s3-uri,
+            output-s3-uri]. Built by _resolve_execute_model_config.
+          * data_pipeline (script-backed) — entryPointS3Uri is the pipeline
+            author's own scriptS3Uri, sparkArguments =
+            [snowflake-params-json, output-s3-uri]. Built by
+            _resolve_data_pipeline_script_config.
         """
         resp = self._client.start_job_run(
             applicationId=step_config["emrApplicationId"],
@@ -123,13 +130,7 @@ class RealEmrExecutionService(EmrExecutionService):
             jobDriver={
                 "sparkSubmit": {
                     "entryPoint": step_config["entryPointS3Uri"],
-                    "entryPointArguments": [
-                        step_config["modelName"],
-                        str(step_config["modelVersion"]),
-                        step_config["artifactS3Uri"],
-                        step_config["inputS3Uri"],
-                        step_config["outputS3Uri"],
-                    ],
+                    "entryPointArguments": [str(a) for a in step_config.get("sparkArguments", [])],
                     **({"sparkSubmitParameters": step_config["sparkSubmitParameters"]} if step_config.get("sparkSubmitParameters") else {}),
                 }
             },

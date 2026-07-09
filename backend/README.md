@@ -240,13 +240,44 @@ create/update) — combined with per-tenant execution roles, this is the
 tenant-isolation boundary for data and compute.
 
 **`SNOWFLAKE_MODE=real`** — the data_pipeline step runs a live, asynchronous
-`COPY INTO 's3://…'` unload (parquet) from the configured
-database/schema/table. The step is **poll-driven exactly like execute_model**:
-`start()` returns the Snowflake query id (persisted on the step as
-`snowflakeQueryId`), each refresh pass polls it, stop/timeout cancels it via
-`SYSTEM$CANCEL_QUERY`, and identifiers are strictly validated before being
-quoted into SQL. S3 access is granted Snowflake-side through a **storage
-integration** (`SNOWFLAKE_STORAGE_INTEGRATION`) — no AWS credentials in SQL.
+`COPY INTO 's3://…'` unload (parquet) from the table named in its
+**`snowflakeParams`** JSON object (`{"database", "schema", "table",
+"warehouse"}` — required keys when the step has no `scriptS3Uri`; extra keys
+are accepted and unused). The step is **poll-driven exactly like
+execute_model**: `start()` returns the Snowflake query id (persisted on the
+step as `snowflakeQueryId`), each refresh pass polls it, stop/timeout
+cancels it via `SYSTEM$CANCEL_QUERY`, and the four identifiers are strictly
+validated — at pipeline authoring time *and* again before being quoted into
+SQL. S3 access is granted Snowflake-side
+through a **storage integration** (`SNOWFLAKE_STORAGE_INTEGRATION`) — no AWS
+credentials in SQL.
+
+**data_pipeline step, script mode** — setting **`scriptS3Uri`** on a
+data_pipeline step REPLACES the built-in COPY INTO unload entirely: the
+script is submitted to the tenant's EMR Serverless application exactly like
+an execute_model run (same `emrJobRunId`/EMR polling/cancellation), with the
+step's own `scriptS3Uri` as the entryPoint — unlike execute_model's EMR
+fields, the script is author-supplied (it *is* the pipeline author's code,
+so there's no registry artifact standing in for it; only the EMR
+application/execution role stay platform-managed, resolved from the
+tenant's execution config the same way). Its `entryPointArguments` contract:
+
+```
+snowflake-params-json   the step's snowflakeParams, JSON-encoded — opaque to
+                         the platform, entirely up to the script to interpret
+                         (e.g. connect via Snowpark for Python with its own
+                         credentials/secrets lookup)
+output-s3-uri            this run's own results prefix — the script MUST
+                         write here; downstream steps read exactly this
+                         step's `output.s3Uri`, the same key the built-in
+                         unload path produces
+```
+
+`scriptS3Uri`, like `destinationS3Uri`, is validated under the tenant's
+`dataS3Prefix` when one is set — put scripts under e.g.
+`s3://<data-bucket>/<tenant_id>/scripts/…` so the tenant's EMR execution
+role (already granted read/write across its own prefix) can read it with no
+extra IAM changes.
 
 The platform connects as a single **service account** (`SNOWFLAKE_USER` +
 key-pair auth, PEM via SSM SecureString; password fallback for non-prod) —

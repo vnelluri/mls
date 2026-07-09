@@ -124,11 +124,27 @@ def dp_step():
     return {
         "type": "data_pipeline",
         "config": {
-            "snowflakeDatabase": "DB",
-            "snowflakeSchema": "SCH",
-            "snowflakeTable": "T",
-            "snowflakeWarehouse": "WH",
+            "snowflakeParams": {
+                "database": "DB",
+                "schema": "SCH",
+                "table": "T",
+                "warehouse": "WH",
+            },
             "destinationS3Uri": "s3://bucket/in",
+        },
+    }
+
+
+def dp_script_step(script_s3_uri="s3://bucket/scripts/extract.py"):
+    """A data_pipeline step whose scriptS3Uri REPLACES the built-in COPY
+    INTO unload — runs on EMR (like execute_model) instead of the Snowflake
+    executor."""
+    return {
+        "type": "data_pipeline",
+        "config": {
+            "snowflakeParams": {"database": "DB", "schema": "SCH", "table": "T"},
+            "destinationS3Uri": "s3://bucket/in",
+            "scriptS3Uri": script_s3_uri,
         },
     }
 

@@ -107,12 +107,20 @@ def fake_snowflake(monkeypatch):
 
 CONFIG = {
     "sourceType": "snowflake",
-    "snowflakeDatabase": "ANALYTICS",
-    "snowflakeSchema": "SCORING",
-    "snowflakeTable": "FEATURES_DAILY",
-    "snowflakeWarehouse": "WH_BATCH",
+    "snowflakeParams": {
+        "database": "ANALYTICS",
+        "schema": "SCORING",
+        "table": "FEATURES_DAILY",
+        "warehouse": "WH_BATCH",
+    },
     "destinationS3Uri": "s3://scoring-in/features",
 }
+
+
+def _with_param(field: str, value) -> dict:
+    """CONFIG with one snowflakeParams key overridden, for the invalid-
+    identifier test matrix below."""
+    return {**CONFIG, "snowflakeParams": {**CONFIG["snowflakeParams"], field: value}}
 
 
 # ---------------------------------------------------------------------------
@@ -130,13 +138,13 @@ class TestBuildUnloadSql:
         assert "CREDENTIALS" not in sql.upper()
 
     @pytest.mark.parametrize("field, value", [
-        ("snowflakeDatabase", 'ANALYTICS"; DROP TABLE X; --'),
-        ("snowflakeSchema", "SCH EMA"),
-        ("snowflakeTable", "T'); SELECT 1"),
-        ("snowflakeTable", ""),
+        ("database", 'ANALYTICS"; DROP TABLE X; --'),
+        ("schema", "SCH EMA"),
+        ("table", "T'); SELECT 1"),
+        ("table", ""),
     ])
     def test_rejects_invalid_identifiers(self, fake_snowflake, field, value):
-        config = {**CONFIG, field: value}
+        config = _with_param(field, value)
         with pytest.raises(ValueError, match="not a valid Snowflake identifier"):
             dps.build_unload_sql(config)
 

@@ -11,9 +11,11 @@ grows real executors.
 
 
 def run_data_pipeline(job_id: str, run_id: str, step_id: str, config: dict) -> None:
+    script = config.get("scriptS3Uri")
+    source = script or (config.get("snowflakeParams") or {}).get("table", "?")
     print(
         f"[job-runner] job={job_id} run={run_id} step={step_id} "
-        f"START data_pipeline: {config.get('snowflakeTable', '?')} -> {config.get('destinationS3Uri', '?')}",
+        f"START data_pipeline: {source} -> {config.get('destinationS3Uri', '?')}",
         flush=True,
     )
 

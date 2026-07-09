@@ -70,9 +70,13 @@ def _validate_step_shape(normalized: List[dict]) -> None:
 # execution role.
 _PLATFORM_MANAGED_EM_FIELDS = ("emrApplicationId", "executionRoleArn", "entryPointS3Uri")
 
-# Which config fields must live under the tenant's dataS3Prefix, per step type.
+# Which config fields must live under the tenant's dataS3Prefix, per step
+# type. destinationS3Uri is always required (schema-enforced); scriptS3Uri
+# is optional (only data_pipeline steps that replace the built-in unload
+# with their own EMR script set it) — _validate_tenant_uris skips fields
+# that are absent rather than requiring them.
 _TENANT_URI_FIELDS = {
-    "data_pipeline": ("destinationS3Uri",),
+    "data_pipeline": ("destinationS3Uri", "scriptS3Uri"),
     "execute_model": ("inputS3Uri", "outputS3Uri"),
     "data_quality_check": ("inputS3Uri",),
 }
@@ -98,6 +102,8 @@ def _validate_execute_model_step(idx: int, config: dict, tenant_id: str) -> None
 def _validate_tenant_uris(idx: int, step_type: str, config: dict, data_prefix: str) -> None:
     for field in _TENANT_URI_FIELDS.get(step_type, ()):
         value = config.get(field) or ""
+        if not value:
+            continue  # optional field (e.g. scriptS3Uri) not set on this step
         if not value.startswith(data_prefix):
             raise bad_request(
                 f"Step {idx} ('{step_type}'): {field} '{value}' is outside the tenant's "

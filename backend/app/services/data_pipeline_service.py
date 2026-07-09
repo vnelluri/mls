@@ -25,9 +25,16 @@ RealDataPipelineService executes
     STORAGE_INTEGRATION = <name> FILE_FORMAT = (TYPE = PARQUET) ...
 asynchronously (execute_async -> sfqid) and polls get_query_status. S3 access
 is via a Snowflake STORAGE INTEGRATION — no AWS credentials ever appear in
-SQL. Identifiers are validated against a strict pattern before being quoted
-into the statement: config is authored by authenticated Lead Data Scientists,
-but SQL injection must be structurally impossible regardless.
+SQL. database/schema/table/warehouse come from the step's `snowflakeParams`
+JSON object (app.schemas.pipeline.DataPipelineConfig) and are validated
+against a strict identifier pattern before being quoted into the statement:
+config is authored by authenticated Lead Data Scientists, but SQL injection
+must be structurally impossible regardless.
+
+This module only runs when the step's config has NO `scriptS3Uri` — a
+data_pipeline step that sets one is EMR-backed instead (the script replaces
+this unload entirely) and is driven by emr_execution_service via
+job_service._resolve_data_pipeline_script_config, never by this module.
 """
 import abc
 import hashlib
@@ -75,7 +82,7 @@ def validate_real_config() -> None:
         ) from exc
 
 
-def _require_identifier(value: str, field: str) -> str:
+def _require_identifier(value: Optional[str], field: str) -> str:
     if not value or not _IDENTIFIER_RE.match(value):
         raise ValueError(
             f"{field} '{value}' is not a valid Snowflake identifier "
@@ -85,11 +92,14 @@ def _require_identifier(value: str, field: str) -> str:
 
 
 def build_unload_sql(step_config: dict) -> str:
-    """The COPY INTO statement for one data_pipeline step. Raises ValueError
+    """The COPY INTO statement for one data_pipeline step (no-script mode
+    only — DataPipelineConfig requires database/schema/table/warehouse
+    inside snowflakeParams whenever scriptS3Uri is unset). Raises ValueError
     on any identifier/URI that fails validation."""
-    database = _require_identifier(step_config["snowflakeDatabase"], "snowflakeDatabase")
-    schema = _require_identifier(step_config["snowflakeSchema"], "snowflakeSchema")
-    table = _require_identifier(step_config["snowflakeTable"], "snowflakeTable")
+    params = step_config.get("snowflakeParams") or {}
+    database = _require_identifier(params.get("database"), "snowflakeParams.database")
+    schema = _require_identifier(params.get("schema"), "snowflakeParams.schema")
+    table = _require_identifier(params.get("table"), "snowflakeParams.table")
     integration = _require_identifier(
         settings.SNOWFLAKE_STORAGE_INTEGRATION, "SNOWFLAKE_STORAGE_INTEGRATION"
     )
@@ -179,8 +189,9 @@ class RealDataPipelineService(DataPipelineService):
         if settings.SNOWFLAKE_ROLE:
             kwargs["role"] = settings.SNOWFLAKE_ROLE
         if step_config:
+            params = step_config.get("snowflakeParams") or {}
             kwargs["warehouse"] = _require_identifier(
-                step_config["snowflakeWarehouse"], "snowflakeWarehouse"
+                params.get("warehouse"), "snowflakeParams.warehouse"
             )
         if settings.SNOWFLAKE_PRIVATE_KEY:
             kwargs["private_key"] = self._private_key_der()
@@ -211,9 +222,10 @@ class RealDataPipelineService(DataPipelineService):
         try:
             cursor = conn.cursor()
             cursor.execute_async(sql)
+            params = step_config.get("snowflakeParams") or {}
             logger.info("Started Snowflake unload %s: %s.%s.%s -> %s",
-                        cursor.sfqid, step_config["snowflakeDatabase"],
-                        step_config["snowflakeSchema"], step_config["snowflakeTable"],
+                        cursor.sfqid, params.get("database"),
+                        params.get("schema"), params.get("table"),
                         step_config["destinationS3Uri"])
             return {"queryId": cursor.sfqid}
         finally:
