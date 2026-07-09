@@ -1,8 +1,16 @@
 """load_to_snowflake: the pipeline's terminal step, loading a run's scored
 output back into Snowflake. Covers pipeline-order/schema validation, the
 publish-only-after-quality-and-approval-gates behavior, run-time source
-resolution, real-mode SQL construction, and stop/cancel routing."""
+resolution, real-mode SQL construction (including the per-row lineage
+columns), and stop/cancel routing."""
+import re
+from io import BytesIO
+
+import boto3
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
+from moto import mock_aws
 
 from app.config import settings
 from app.services.job_service import _resolve_load_to_snowflake_config
@@ -76,6 +84,11 @@ def test_load_step_runs_immediately_after_dq_when_no_approval_gate(client, ident
     # never author-configurable (LoadToSnowflakeConfig has no source field).
     em = next(s for s in job["steps"] if s["type"] == "execute_model")
     assert load["resolved"]["sourceS3Uri"] == em["output"]["resultsS3Prefix"]
+    # runId/loadDate are what get stamped onto every loaded row in real mode
+    # (RUN_ID_COLUMN / LOAD_DATE_COLUMN) — resolved once at step start.
+    assert load["resolved"]["runId"] == job["runId"]
+    assert load["output"]["runId"] == job["runId"]
+    assert load["output"]["loadDate"] == load["resolved"]["loadDate"]
 
 
 def test_load_step_waits_for_human_approval(client, identity, fixed_dq):
@@ -171,26 +184,111 @@ def test_resolution_uses_execute_model_results_prefix():
     }
     load = {"step_id": "step-2", "type": "load_to_snowflake", "config": load_step()["config"]}
     resolved = _resolve_load_to_snowflake_config(_job_item([exec_step, load]), load)
-    assert resolved == {"sourceS3Uri": "s3://bucket/out/2026-01-01/RUN-0001/"}
+    assert resolved["sourceS3Uri"] == "s3://bucket/out/2026-01-01/RUN-0001/"
+    # runId/loadDate are what build_load_sql stamps onto every loaded row
+    # (RUN_ID_COLUMN / LOAD_DATE_COLUMN) -- resolved once here, at step
+    # start, not re-derived per poll.
+    assert resolved["runId"] == "RUN-0001"
+    assert re.match(r"^\d{4}-\d{2}-\d{2}$", resolved["loadDate"])
 
 
-# ---- real-mode SQL construction ------------------------------------------------
+# ---- real-mode SQL construction (moto S3 + pyarrow schema read) ---------------
 
-CONFIG = {
-    "snowflakeParams": {"database": "ANALYTICS", "schema": "SCORING", "table": "PREDICTIONS", "warehouse": "WH_BATCH"},
-    "sourceS3Uri": "s3://scoring-out/features/2026-01-01/RUN-0001/",
-}
+BUCKET = "scoring-out"
+PREFIX = "features/2026-01-01/RUN-0001"
+SOURCE_URI = f"s3://{BUCKET}/{PREFIX}"
 
 
-def test_build_load_sql(monkeypatch):
+def parquet_bytes(columns: dict) -> bytes:
+    buf = BytesIO()
+    pq.write_table(pa.table(columns), buf)
+    return buf.getvalue()
+
+
+@pytest.fixture()
+def load_s3():
+    with mock_aws():
+        client = boto3.client("s3", region_name="us-east-1")
+        client.create_bucket(Bucket=BUCKET)
+        yield client
+
+
+def put_scored_output(s3, columns: dict, key: str = f"{PREFIX}/part-000.parquet") -> None:
+    s3.put_object(Bucket=BUCKET, Key=key, Body=parquet_bytes(columns))
+
+
+def load_config(**overrides) -> dict:
+    config = {
+        "snowflakeParams": {
+            "database": "ANALYTICS", "schema": "SCORING", "table": "PREDICTIONS", "warehouse": "WH_BATCH",
+        },
+        "sourceS3Uri": SOURCE_URI,
+        "runId": "RUN-0007",
+        "loadDate": "2026-07-08",
+    }
+    config.update(overrides)
+    return config
+
+
+def test_build_load_sql_reads_columns_and_stamps_lineage(monkeypatch, load_s3):
     monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
-    sql = build_load_sql(CONFIG)
-    assert 'COPY INTO "ANALYTICS"."SCORING"."PREDICTIONS"' in sql
-    assert "FROM 's3://scoring-out/features/2026-01-01/RUN-0001/'" in sql
+    put_scored_output(load_s3, {"credit_score": [650], "prediction": [0.2]})
+
+    sql = build_load_sql(load_config())
+    assert (
+        'COPY INTO "ANALYTICS"."SCORING"."PREDICTIONS" '
+        "(credit_score, prediction, _TMS_RUN_ID, _TMS_LOAD_DATE)"
+    ) in sql
+    assert "$1['credit_score']" in sql
+    assert "$1['prediction']" in sql
+    assert "'RUN-0007'::VARCHAR" in sql
+    assert "'2026-07-08'::DATE" in sql
+    assert f"FROM '{SOURCE_URI}/'" in sql
     assert "STORAGE_INTEGRATION = S3_UNLOAD_INT" in sql
-    assert "MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE" in sql
     # Loads always append -- never the unload's OVERWRITE semantics.
     assert "OVERWRITE" not in sql
+    # Replaced by the explicit transformation + reserved lineage columns.
+    assert "MATCH_BY_COLUMN_NAME" not in sql
+
+
+def test_build_load_sql_quotes_non_identifier_column_names(monkeypatch, load_s3):
+    monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
+    put_scored_output(load_s3, {"credit score": [650]})  # space -- not a plain identifier
+
+    sql = build_load_sql(load_config())
+    assert '"credit score"' in sql
+    assert "$1['credit score']" in sql
+
+
+def test_build_load_sql_reads_smallest_file_for_schema(monkeypatch, load_s3):
+    # Multiple files in one run's output share the same schema (partitioned
+    # output of the same Spark job); only the smallest needs downloading.
+    monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
+    put_scored_output(load_s3, {"a": [1, 2, 3]}, key=f"{PREFIX}/part-000.parquet")
+    put_scored_output(load_s3, {"a": [4]}, key=f"{PREFIX}/part-001.parquet")
+
+    sql = build_load_sql(load_config())
+    assert "$1['a']" in sql
+
+
+def test_build_load_sql_no_parquet_files_raises(monkeypatch, load_s3):
+    monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
+    load_s3.put_object(Bucket=BUCKET, Key=f"{PREFIX}/_SUCCESS", Body=b"")
+    with pytest.raises(ValueError, match="No parquet files found"):
+        build_load_sql(load_config())
+
+
+def test_build_load_sql_rejects_reserved_column_collision(monkeypatch, load_s3):
+    monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
+    put_scored_output(load_s3, {"_tms_run_id": [1]})
+    with pytest.raises(ValueError, match="reserved"):
+        build_load_sql(load_config())
+
+
+def test_build_load_sql_requires_resolved_run_id_and_load_date(monkeypatch, load_s3):
+    monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
+    with pytest.raises(ValueError, match="runId and loadDate"):
+        build_load_sql(load_config(runId=None))
 
 
 @pytest.mark.parametrize("field, value", [
@@ -200,13 +298,14 @@ def test_build_load_sql(monkeypatch):
 ])
 def test_build_load_sql_rejects_invalid_identifiers(monkeypatch, field, value):
     monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
-    config = {**CONFIG, "snowflakeParams": {**CONFIG["snowflakeParams"], field: value}}
+    base = load_config()
+    config = {**base, "snowflakeParams": {**base["snowflakeParams"], field: value}}
     with pytest.raises(ValueError, match="not a valid Snowflake identifier"):
         build_load_sql(config)
 
 
 def test_build_load_sql_rejects_non_s3_source(monkeypatch):
     monkeypatch.setattr(settings, "SNOWFLAKE_STORAGE_INTEGRATION", "S3_UNLOAD_INT")
-    config = {**CONFIG, "sourceS3Uri": "s3://bucket/bad'quote"}
+    config = load_config(sourceS3Uri="s3://bucket/bad'quote")
     with pytest.raises(ValueError, match="not a plain s3:// URI"):
         build_load_sql(config)

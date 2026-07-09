@@ -376,6 +376,11 @@ def _resolve_load_to_snowflake_config(item: dict, step: dict) -> dict:
     resultsS3Prefix the data_quality_check step inspects, so a load can
     never be pointed at stale or foreign data.
 
+    `runId`/`loadDate` are the values snowflake_load_service.build_load_sql
+    stamps onto every loaded row (RUN_ID_COLUMN / LOAD_DATE_COLUMN) —
+    resolved once here (not read fresh per poll) so every poll of the same
+    step agrees, exactly like every other run-scoped value.
+
     Raises RuntimeError if there's no upstream execute_model output to load
     from — shouldn't happen given pipeline_service.CANONICAL_STEP_ORDER, but
     the step must fail loudly rather than silently loading nothing."""
@@ -386,7 +391,11 @@ def _resolve_load_to_snowflake_config(item: dict, step: dict) -> dict:
             "load_to_snowflake has no upstream execute_model output to load from — "
             "the pipeline must include an execute_model step before it"
         )
-    return {"sourceS3Uri": results_prefix}
+    return {
+        "sourceS3Uri": results_prefix,
+        "runId": item["run_id"],
+        "loadDate": _now()[:10],
+    }
 
 
 def _start_step(item: dict, step: dict) -> None:

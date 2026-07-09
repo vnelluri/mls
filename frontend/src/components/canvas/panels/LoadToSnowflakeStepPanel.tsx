@@ -61,6 +61,13 @@ export function LoadToSnowflakeStepPanel({
         The destination table's columns are matched by name against the scored output — make sure it has a column
         for every feature the execute-model step preserves plus its prediction column.
       </InlineAlert>
+      <div className="mt-2">
+        <InlineAlert kind="warning">
+          The destination table must also have two extra columns for the platform to stamp on every loaded row:{' '}
+          <code>_TMS_RUN_ID</code> (VARCHAR) and <code>_TMS_LOAD_DATE</code> (DATE). A missing column fails the load
+          with a clear error rather than silently dropping the lineage data.
+        </InlineAlert>
+      </div>
     </div>
   );
 }

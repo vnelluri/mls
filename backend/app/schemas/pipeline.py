@@ -135,8 +135,11 @@ class LoadToSnowflakeConfig(ApiModel):
     execute_model output (resolved by job_service at step start, the same
     resultsS3Prefix the data_quality_check step inspects) — never
     configurable, so a load can never be pointed at stale or foreign data.
-    Each run APPENDS its rows to the destination table (COPY INTO, matched
-    by column name); nothing is ever overwritten."""
+    Each run APPENDS its rows to the destination table; nothing is ever
+    overwritten. Every loaded row also carries the platform's own
+    per-row lineage columns (snowflake_load_service.RUN_ID_COLUMN /
+    LOAD_DATE_COLUMN, `_TMS_RUN_ID` / `_TMS_LOAD_DATE`) — the destination
+    table MUST already have both columns, or the load fails loudly."""
 
     snowflakeParams: Dict[str, Any] = Field(default_factory=dict)
 

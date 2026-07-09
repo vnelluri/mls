@@ -283,29 +283,50 @@ role (already granted read/write across its own prefix) can read it with no
 extra IAM changes.
 
 **`load_to_snowflake` step** — the reverse of `data_pipeline`: loads a run's
-scored output back into Snowflake via an asynchronous `COPY INTO <table>`
-(poll-driven exactly like the unload — `snowflakeQueryId`, stop/timeout
-cancellation, the works). Always the pipeline's **last** step
-(`pipeline_service.CANONICAL_STEP_ORDER`) — a run only reaches it once the
-quality gate, and any approval gate, have already passed, so nothing
-unreviewed is ever published. Its `snowflakeParams` JSON object requires the
-same `database`/`schema`/`table`/`warehouse` keys as the unload (same
-identifier validation); there is **no author-supplied source field and no
-script-override escape hatch** — the source is always resolved at run time
-from the run's own execute_model output (the same `resultsS3Prefix` the
-data_quality_check step inspects), so a load can never be pointed at stale
-or foreign data. Every run **appends** — column-matched by name
-(`MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE`), never `OVERWRITE`; the
-destination table's columns must be named to match the scored output (every
-preserved feature plus the prediction column). Traceability back to the run
-uses the same mechanism as the unload: the step's persisted
-`snowflakeQueryId` plus the platform's audit log, not row-level run-id/date
-columns (which would require every destination table to reserve
-platform-owned columns). Requires the service account's Snowflake role to
-additionally have **INSERT** on the destination table (unloads only ever
-needed read) and the Snowflake storage-integration IAM role to have
-**`s3:GetObject`** on the data bucket (the `infra/data-plane` module grants
-this — `LoadObjects` in `snowflake.tf`).
+scored output back into Snowflake via an asynchronous, transformation-based
+`COPY INTO <table>` (poll-driven exactly like the unload —
+`snowflakeQueryId`, stop/timeout cancellation, the works). Always the
+pipeline's **last** step (`pipeline_service.CANONICAL_STEP_ORDER`) — a run
+only reaches it once the quality gate, and any approval gate, have already
+passed, so nothing unreviewed is ever published. Its `snowflakeParams` JSON
+object requires the same `database`/`schema`/`table`/`warehouse` keys as the
+unload (same identifier validation); there is **no author-supplied source
+field and no script-override escape hatch** — the source is always resolved
+at run time from the run's own execute_model output (the same
+`resultsS3Prefix` the data_quality_check step inspects), so a load can never
+be pointed at stale or foreign data. Every run **appends**, never
+`OVERWRITE`.
+
+Every loaded row also carries the platform's own **per-row lineage
+columns** — `_TMS_RUN_ID` (VARCHAR) and `_TMS_LOAD_DATE` (DATE) — on top of
+the query-level traceability the unload already has (the step's persisted
+`snowflakeQueryId` plus the platform's audit log). To stamp these, the step
+reads the run's own scored-output **column names** from one representative
+parquet file (`snowflake_load_service._read_source_columns`, via `pyarrow`
+— lazily imported and only required by tenants that actually use this step,
+not a blanket `SNOWFLAKE_MODE=real` requirement) and builds an explicit
+`COPY INTO <table> (col1, col2, ..., _TMS_RUN_ID, _TMS_LOAD_DATE) FROM
+(SELECT $1['col1'], $1['col2'], ..., '<run>'::VARCHAR, '<date>'::DATE FROM
+'s3://...')` rather than a plain `MATCH_BY_COLUMN_NAME` load. Consequences:
+
+- **The destination table MUST already have `_TMS_RUN_ID VARCHAR` and
+  `_TMS_LOAD_DATE DATE` columns**, plus one column per preserved
+  scored-output feature (matched by name — Snowflake's standard
+  case-insensitive folding for plain identifiers, same forgiving behavior a
+  `MATCH_BY_COLUMN_NAME` load would have given). A missing column fails the
+  load loudly (Snowflake's own "invalid identifier" error, surfaced as the
+  step's `errorMessage`) — never silently.
+- A scored-output column literally named `_tms_run_id`/`_tms_load_date`
+  (any case) is rejected at build time as a reserved-name collision.
+- VARIANT → destination-column-type coercion during the load follows
+  Snowflake's own casting rules — the platform doesn't introspect or
+  validate the destination table's column types ahead of time.
+
+Requires the service account's Snowflake role to additionally have
+**INSERT** on the destination table (unloads only ever needed read) and the
+Snowflake storage-integration IAM role to have **`s3:GetObject`** on the
+data bucket (the `infra/data-plane` module grants this — `LoadObjects` in
+`snowflake.tf`).
 
 The platform connects as a single **service account** (`SNOWFLAKE_USER` +
 key-pair auth, PEM via SSM SecureString; password fallback for non-prod) —
