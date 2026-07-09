@@ -93,13 +93,14 @@ def dp_step(step_id, table, dest):
 
 
 def em_step(step_id, depends, model_name, version, in_uri, out_uri):
+    # emrApplicationId / executionRoleArn / entryPointS3Uri are
+    # platform-managed (resolved from the tenant's execution config at step
+    # start) -- authoring them is rejected by POST /pipelines, so the seed
+    # data doesn't carry them either.
     return {
         "step_id": step_id, "type": "execute_model", "dependsOn": depends,
         "config": {
             "modelName": model_name, "modelVersion": version,
-            "emrApplicationId": "00fake1emrapp", "executionRoleArn":
-                "arn:aws:iam::123456789012:role/mlserv-emr-exec",
-            "entryPointS3Uri": "s3://mlserv-artifacts/entrypoints/score.py",
             "inputS3Uri": in_uri, "outputS3Uri": out_uri,
             "sparkSubmitParameters": None,
         },
