@@ -124,6 +124,20 @@ def approval_step(step_id, depends, note=None):
             "config": {"approverNote": note}}
 
 
+def load_step(step_id, depends, table, warehouse="SCORING_WH"):
+    # Always the pipeline's LAST step -- no source field: the platform
+    # always loads the run's own execute_model output, never author-chosen.
+    return {
+        "step_id": step_id, "type": "load_to_snowflake", "dependsOn": depends,
+        "config": {
+            "snowflakeParams": {
+                "database": "FIN_DW", "schema": "SCORING",
+                "table": table, "warehouse": warehouse,
+            },
+        },
+    }
+
+
 def pipeline_item(tenant_id, pipeline_id, name, description, requires_approval, steps,
                   status="active", minutes_ago=600):
     updated = ts(minutes_ago)
@@ -140,7 +154,8 @@ def pipeline_item(tenant_id, pipeline_id, name, description, requires_approval, 
 PIPELINES = [
     pipeline_item(
         "acme-capital", "pl-acmecred1", "Credit Risk Batch Scoring",
-        "Nightly credit-risk scoring: Snowflake extract -> EMR scoring -> DQ gate -> lead approval.",
+        "Nightly credit-risk scoring: Snowflake extract -> EMR scoring -> DQ gate -> "
+        "lead approval -> publish scores back to Snowflake.",
         True,
         [
             dp_step("step-1", "CREDIT_APPLICATIONS", "s3://mlserv-acme/credit/in/"),
@@ -148,24 +163,27 @@ PIPELINES = [
                     "s3://mlserv-acme/credit/in/", "s3://mlserv-acme/credit/out/"),
             dq_step("step-3", ["step-2"], "s3://mlserv-acme/credit/out/"),
             approval_step("step-4", ["step-3"], "Lead sign-off before scores publish."),
+            # After approval -- only published once a human has signed off.
+            load_step("step-5", ["step-4"], "CREDIT_RISK_PREDICTIONS"),
         ],
         minutes_ago=60 * 48,
     ),
     pipeline_item(
         "acme-capital", "pl-acmefrd01", "Fraud Detection Scoring",
-        "Hourly fraud scoring without an approval gate.",
+        "Hourly fraud scoring without an approval gate; publishes as soon as the DQ gate passes.",
         False,
         [
             dp_step("step-1", "CARD_TRANSACTIONS", "s3://mlserv-acme/fraud/in/"),
             em_step("step-2", ["step-1"], "fraud-detector", "2",
                     "s3://mlserv-acme/fraud/in/", "s3://mlserv-acme/fraud/out/"),
             dq_step("step-3", ["step-2"], "s3://mlserv-acme/fraud/out/"),
+            load_step("step-4", ["step-3"], "FRAUD_PREDICTIONS"),
         ],
         minutes_ago=60 * 24,
     ),
     pipeline_item(
         "blue-harbor-bank", "pl-bhbchurn1", "Churn Propensity Scoring",
-        "Weekly churn scoring with lead approval gate.",
+        "Weekly churn scoring with lead approval gate before scores publish.",
         True,
         [
             dp_step("step-1", "CUSTOMER_360", "s3://mlserv-bhb/churn/in/"),
@@ -173,6 +191,7 @@ PIPELINES = [
                     "s3://mlserv-bhb/churn/in/", "s3://mlserv-bhb/churn/out/"),
             dq_step("step-3", ["step-2"], "s3://mlserv-bhb/churn/out/"),
             approval_step("step-4", ["step-3"]),
+            load_step("step-5", ["step-4"], "CHURN_PREDICTIONS"),
         ],
         minutes_ago=60 * 12,
     ),
@@ -185,6 +204,7 @@ PIPELINES = [
             em_step("step-2", ["step-1"], "aml-alert-ranker", "1",
                     "s3://mlserv-bhb/aml/in/", "s3://mlserv-bhb/aml/out/"),
             dq_step("step-3", ["step-2"], "s3://mlserv-bhb/aml/out/"),
+            load_step("step-4", ["step-3"], "AML_ALERT_PREDICTIONS"),
         ],
         status="draft",
         minutes_ago=60 * 2,
@@ -304,14 +324,25 @@ _dq_failed_output = {
     },
 }
 
+# load_to_snowflake output for the one job below that actually reaches it
+# (no approval gate on PL_ACME_FRAUD -- publishes as soon as DQ passes).
+_load_fraud_output = {
+    "table": "FIN_DW.SCORING.FRAUD_PREDICTIONS",
+    "rowsLoaded": _dq_rework_output["requestCount"],
+    "runId": "RUN-0001",
+    "loadDate": ts(45)[:10],
+}
+
 JOBS = [
-    # Awaiting approval (Acme credit pipeline: dp/em/dq succeeded, approval pending)
+    # Awaiting approval (Acme credit pipeline: dp/em/dq succeeded, approval
+    # pending -- the load step (step-5) stays idle: it only runs once a
+    # human approves, so nothing unreviewed reaches Snowflake).
     job_item(
         "acme-capital", "job-acmeappr1", PL_ACME_CREDIT, "RUN-0001",
         "awaiting_approval",
         job_steps_from(
             PL_ACME_CREDIT,
-            ["succeeded", "succeeded", "succeeded", "awaiting_approval"],
+            ["succeeded", "succeeded", "succeeded", "awaiting_approval", "idle"],
             outputs={
                 "step-1": {"rowsWritten": 18450, "s3Uri": "s3://mlserv-acme/credit/in/"},
                 "step-3": _dq_passed_output,
@@ -319,25 +350,29 @@ JOBS = [
         ),
         minutes_ago=95,
     ),
-    # Success without approval gate (Acme fraud) -- produced the Rework snapshot
+    # Success without approval gate (Acme fraud) -- produced the Rework
+    # snapshot and, with no approval gate, published straight through to
+    # Snowflake once the DQ gate passed.
     job_item(
         "acme-capital", "job-acmefrd01", PL_ACME_FRAUD, "RUN-0001", "success",
         job_steps_from(
             PL_ACME_FRAUD,
-            ["succeeded", "succeeded", "succeeded"],
+            ["succeeded", "succeeded", "succeeded", "succeeded"],
             outputs={
                 "step-1": {"rowsWritten": 30211, "s3Uri": "s3://mlserv-acme/fraud/in/"},
                 "step-3": _dq_rework_output,
+                "step-4": _load_fraud_output,
             },
         ),
         minutes_ago=50,
     ),
-    # Failed DQ (Blue Harbor churn) -- produced the Failed snapshot; retried once before
+    # Failed DQ (Blue Harbor churn) -- produced the Failed snapshot; retried
+    # once before. The failure stops the cascade well before the load step.
     job_item(
         "blue-harbor-bank", "job-bhbfail01", PL_BHB_CHURN, "RUN-0002", "failed",
         job_steps_from(
             PL_BHB_CHURN,
-            ["succeeded", "succeeded", "failed", "idle"],
+            ["succeeded", "succeeded", "failed", "idle", "idle"],
             outputs={
                 "step-1": {"rowsWritten": 7211, "s3Uri": "s3://mlserv-bhb/churn/in/"},
                 "step-3": _dq_failed_output,
@@ -350,7 +385,7 @@ JOBS = [
     # Cancelled job (Blue Harbor churn)
     job_item(
         "blue-harbor-bank", "job-bhbstop01", PL_BHB_CHURN, "RUN-0001", "cancelled",
-        job_steps_from(PL_BHB_CHURN, ["succeeded", "running", "idle", "idle"],
+        job_steps_from(PL_BHB_CHURN, ["succeeded", "running", "idle", "idle", "idle"],
                        outputs={"step-1": {"rowsWritten": 6650, "s3Uri": "s3://mlserv-bhb/churn/in/"}}),
         minutes_ago=60 * 26,
     ),
