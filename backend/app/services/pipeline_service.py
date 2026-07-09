@@ -19,6 +19,22 @@ from app.services import audit_service
 SERVICENOW_TICKET_RE = re.compile(r"^(CHG|RITM|INC|REQ|TASK)\d{6,10}$", re.IGNORECASE)
 
 
+def _format_validation_errors(exc: ValidationError) -> str:
+    """A pydantic ValidationError's default str() is a multi-line dump (repr
+    of the offending input, a docs URL per error, ...) -- fine for logs, not
+    for a 400 body a UI shows verbatim. Reduce it to `field: message`
+    (or just `message` for a whole-model error, e.g. our own model_validator
+    checks, which have no field location) joined by "; "."""
+    parts = []
+    for err in exc.errors():
+        loc = ".".join(str(p) for p in err["loc"])
+        msg = err["msg"]
+        if msg.startswith("Value error, "):
+            msg = msg[len("Value error, "):]
+        parts.append(f"{loc}: {msg}" if loc else msg)
+    return "; ".join(parts)
+
+
 def _gen_pipeline_id() -> str:
     return "pl-" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
 
@@ -134,7 +150,9 @@ def _validate_and_normalize_steps(steps_in: List[dict], tenant_id: str) -> List[
         try:
             validated_config = model_cls(**config)
         except ValidationError as exc:
-            raise bad_request(f"Step {idx} ('{step_type}') config invalid: {exc}")
+            raise bad_request(
+                f"Step {idx} ('{step_type}') config invalid: {_format_validation_errors(exc)}"
+            )
 
         # Check names become DynamoDB map keys in the job step's output
         # (dataQualityDetails) — empty keys are not storable.

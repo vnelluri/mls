@@ -21,6 +21,23 @@ function echoAdapter(config: AxiosRequestConfig): Promise<AxiosResponse> {
   } as AxiosResponse);
 }
 
+/** Adapter that rejects the way axios's real (xhr/http) adapters do for a
+ * non-2xx response: a genuine Error instance (so both `instanceof Error`
+ * checks throughout the app and vitest's `toThrow` matcher work) additionally
+ * carrying axios's own error markers (`isAxiosError`, `.response`) — a
+ * plain `Promise.resolve(...)` bypasses axios's `validateStatus`/`settle`
+ * entirely, since a custom adapter owns that decision itself. */
+function errorResponseAdapter(status: number, data: unknown) {
+  return (config: AxiosRequestConfig): Promise<AxiosResponse> =>
+    Promise.reject(
+      Object.assign(new Error(`Request failed with status code ${status}`), {
+        isAxiosError: true,
+        config,
+        response: { data, status, statusText: 'Error', headers: {}, config } as AxiosResponse,
+      }),
+    );
+}
+
 afterEach(() => {
   setBearerTokenGetter(() => null);
   setDemoSelectedRole(null);
@@ -73,6 +90,32 @@ describe('apiClient in demo mode', () => {
     demo.setDemoSelectedRole(null);
     vi.unstubAllEnvs();
     vi.resetModules();
+  });
+});
+
+describe('apiClient response interceptor (error detail extraction)', () => {
+  it('replaces the generic axios message with a string `detail` (our own bad_request/conflict/etc.)', async () => {
+    await expect(
+      apiClient.get('/pipelines', {
+        adapter: errorResponseAdapter(400, { detail: "snowflakeParams must include ['database', 'schema']" }),
+      }),
+    ).rejects.toThrow("snowflakeParams must include ['database', 'schema']");
+  });
+
+  it('joins a list-shaped `detail` (FastAPI request-body validation) into one message', async () => {
+    await expect(
+      apiClient.get('/pipelines', {
+        adapter: errorResponseAdapter(422, {
+          detail: [{ loc: ['body', 'name'], msg: 'Field required', type: 'missing' }],
+        }),
+      }),
+    ).rejects.toThrow('Field required');
+  });
+
+  it('leaves the generic axios message alone when there is no `detail`', async () => {
+    await expect(
+      apiClient.get('/pipelines', { adapter: errorResponseAdapter(500, {}) }),
+    ).rejects.toThrow('Request failed with status code 500');
   });
 });
 

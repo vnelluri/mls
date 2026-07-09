@@ -60,6 +60,22 @@ def test_blank_dq_check_name_rejected(client, identity):
     assert resp.status_code == 400
 
 
+def test_step_config_validation_error_is_a_clean_one_liner(client, identity):
+    """A pydantic ValidationError's default str() is a multi-line dump (the
+    offending input repr'd, a docs URL per error, ...) -- the API must not
+    hand that to a UI verbatim. Covers both error shapes: a whole-model
+    error from one of our own @model_validator checks (no field location)
+    and a plain missing-required-field error (has one)."""
+    step = em_step()
+    del step["config"]["modelName"]
+    resp = client.post("/pipelines", json={"name": "bad", "steps": [step]})
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail == "Step 0 ('execute_model') config invalid: modelName: Field required"
+    assert "\n" not in detail
+    assert "pydantic.dev" not in detail
+
+
 # ---- data_pipeline: snowflakeParams JSON + scriptS3Uri ----------------------
 
 def test_snowflake_params_missing_keys_rejected(client, identity):

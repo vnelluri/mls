@@ -55,4 +55,30 @@ apiClient.interceptors.request.use(async (config) => {
   return config;
 });
 
+/** Every error-handling call site in the app follows the same pattern —
+ * `err instanceof Error ? err.message : fallback` — so a bare axios error's
+ * generic "Request failed with status code 400" is what users see on every
+ * failed request, never the backend's actual (useful) explanation. Rewrite
+ * the error's `message` in place, here, once: FastAPI's error body is
+ * `{"detail": ...}`, either a string (our own bad_request/conflict/etc.
+ * exceptions) or a list of `{msg, loc}` objects (FastAPI's own request-body
+ * validation, e.g. a field of the wrong type). Every existing catch block
+ * picks this up for free — no call-site changes needed. */
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (axios.isAxiosError(error)) {
+      const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
+      if (typeof detail === 'string' && detail.trim()) {
+        error.message = detail;
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        error.message = detail
+          .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d)))
+          .join('; ');
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
 export { API_BASE_URL, DEMO_MODE };
