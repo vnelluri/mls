@@ -3,9 +3,12 @@
 Multi-tenant batch model-serving platform for a financial organization.
 FastAPI + DynamoDB. A **Pipeline** is a reusable template of typed steps
 (`data_pipeline` → `execute_model` → `data_quality_check` → optional
-`approval`); a **Job** is one execution of a pipeline with per-step run state.
-When a data-quality-check step completes, a **MonitoringSnapshot** is recorded
-and the model's denormalized monitoring status updates.
+`approval` → optional `load_to_snowflake`); a **Job** is one execution of a
+pipeline with per-step run state. When a data-quality-check step completes,
+a **MonitoringSnapshot** is recorded and the model's denormalized monitoring
+status updates. `load_to_snowflake`, when present, is always the pipeline's
+LAST step — it publishes a run's scored output back into Snowflake only
+after the quality gate, and any approval gate, have already passed.
 
 ## Quickstart (no Docker — this is the primary local path)
 
@@ -279,6 +282,31 @@ output-s3-uri            this run's own results prefix — the script MUST
 role (already granted read/write across its own prefix) can read it with no
 extra IAM changes.
 
+**`load_to_snowflake` step** — the reverse of `data_pipeline`: loads a run's
+scored output back into Snowflake via an asynchronous `COPY INTO <table>`
+(poll-driven exactly like the unload — `snowflakeQueryId`, stop/timeout
+cancellation, the works). Always the pipeline's **last** step
+(`pipeline_service.CANONICAL_STEP_ORDER`) — a run only reaches it once the
+quality gate, and any approval gate, have already passed, so nothing
+unreviewed is ever published. Its `snowflakeParams` JSON object requires the
+same `database`/`schema`/`table`/`warehouse` keys as the unload (same
+identifier validation); there is **no author-supplied source field and no
+script-override escape hatch** — the source is always resolved at run time
+from the run's own execute_model output (the same `resultsS3Prefix` the
+data_quality_check step inspects), so a load can never be pointed at stale
+or foreign data. Every run **appends** — column-matched by name
+(`MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE`), never `OVERWRITE`; the
+destination table's columns must be named to match the scored output (every
+preserved feature plus the prediction column). Traceability back to the run
+uses the same mechanism as the unload: the step's persisted
+`snowflakeQueryId` plus the platform's audit log, not row-level run-id/date
+columns (which would require every destination table to reserve
+platform-owned columns). Requires the service account's Snowflake role to
+additionally have **INSERT** on the destination table (unloads only ever
+needed read) and the Snowflake storage-integration IAM role to have
+**`s3:GetObject`** on the data bucket (the `infra/data-plane` module grants
+this — `LoadObjects` in `snowflake.tf`).
+
 The platform connects as a single **service account** (`SNOWFLAKE_USER` +
 key-pair auth, PEM via SSM SecureString; password fallback for non-prod) —
 **users never connect to Snowflake** and no user identity or credential is
@@ -476,7 +504,7 @@ app/
   schemas/           Pydantic models incl. PageEnvelope[T] and the StepConfig union
   db/client.py       boto3 factory (endpoint-aware) + float/Decimal boundary
   repositories/      pure DynamoDB CRUD per table
-  services/          business logic; emr/data-pipeline/data-quality mock-real splits
+  services/          business logic; emr/data-pipeline/snowflake-load/data-quality mock-real splits
   routers/           HTTP endpoints
   core/              pagination + shared HTTP exceptions
 emr/                 scoring_entrypoint.py — the reference EMR Serverless batch-scoring

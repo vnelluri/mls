@@ -1,10 +1,11 @@
 # The AWS half of the Snowflake STORAGE INTEGRATION: the IAM role Snowflake
-# assumes to write COPY INTO unloads into the data bucket. Two-step
-# handshake (see README): first apply with the snowflake_* variables empty
-# (placeholder trust: this account only), create the integration in
-# Snowflake pointing at this role's ARN, then set the two DESC INTEGRATION
-# values and apply again to pin the trust to Snowflake's IAM user + external
-# id.
+# assumes for BOTH directions of COPY INTO — writing unloads into the data
+# bucket AND reading a run's scored output back out for the
+# load_to_snowflake step. Two-step handshake (see README): first apply with
+# the snowflake_* variables empty (placeholder trust: this account only),
+# create the integration in Snowflake pointing at this role's ARN, then set
+# the two DESC INTEGRATION values and apply again to pin the trust to
+# Snowflake's IAM user + external id.
 #
 # Scope note: Snowflake gets write access to the whole data bucket rather
 # than per-tenant paths, because unload destinations are tenant-chosen. The
@@ -40,8 +41,8 @@ resource "aws_iam_role" "snowflake_integration" {
 }
 
 data "aws_iam_policy_document" "snowflake_integration" {
-  # What COPY INTO <s3://...> needs: put the parquet files (and delete them —
-  # the platform unloads with OVERWRITE = TRUE), list/locate the bucket.
+  # What COPY INTO <s3://...> (unload) needs: put the parquet files (and
+  # delete them — the platform unloads with OVERWRITE = TRUE).
   statement {
     sid = "UnloadObjects"
     actions = [
@@ -51,8 +52,17 @@ data "aws_iam_policy_document" "snowflake_integration" {
     resources = ["${aws_s3_bucket.this["data"].arn}/*"]
   }
 
+  # What COPY INTO <table> FROM <s3://...> (load_to_snowflake) needs: read
+  # the run's scored output back out. Read-only — the load step never
+  # writes to S3, only to the destination Snowflake table.
   statement {
-    sid       = "UnloadBucket"
+    sid       = "LoadObjects"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.this["data"].arn}/*"]
+  }
+
+  statement {
+    sid       = "DataBucketList"
     actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [aws_s3_bucket.this["data"].arn]
   }

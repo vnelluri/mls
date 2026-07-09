@@ -30,7 +30,8 @@ export type StepType =
   | 'data_pipeline'
   | 'execute_model'
   | 'data_quality_check'
-  | 'approval';
+  | 'approval'
+  | 'load_to_snowflake';
 
 export type ModelStage = 'None' | 'Staging' | 'Production' | 'Archived';
 
@@ -93,11 +94,24 @@ export interface ApprovalConfig {
   approverNote?: string;
 }
 
+export interface LoadToSnowflakeConfig {
+  /**
+   * Every Snowflake-specific parameter as one JSON object — database,
+   * schema, table, warehouse are required (built-in COPY INTO <table>
+   * load). No source field: the platform always loads the run's own
+   * execute_model output, never author-chosen. Always the pipeline's LAST
+   * step — it only runs once a run has cleared the quality gate and, if
+   * present, the approval gate, so nothing unreviewed is ever published.
+   */
+  snowflakeParams: Record<string, unknown>;
+}
+
 export type StepConfig =
   | DataPipelineConfig
   | ExecuteModelConfig
   | DataQualityConfig
-  | ApprovalConfig;
+  | ApprovalConfig
+  | LoadToSnowflakeConfig;
 
 export interface PipelineStep {
   stepId: string;

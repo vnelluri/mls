@@ -5,7 +5,9 @@ from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import ApiModel
 
-StepType = Literal["data_pipeline", "execute_model", "data_quality_check", "approval"]
+StepType = Literal[
+    "data_pipeline", "execute_model", "data_quality_check", "approval", "load_to_snowflake"
+]
 PipelineStatus = Literal["draft", "active", "archived"]
 # Deployment environment gate: every pipeline is born in "staging" (manual,
 # reviewable runs only) and must be explicitly promoted to "production" —
@@ -21,8 +23,24 @@ PipelineEnvironment = Literal["staging", "production"]
 # pattern data_pipeline_service.build_unload_sql enforces again at execution
 # time (the authoritative SQL-injection guard); the two must stay identical.
 _SNOWFLAKE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
-# Keys snowflakeParams must carry to build the platform's COPY INTO unload.
+# Keys snowflakeParams must carry to build a platform-generated COPY INTO
+# statement — shared by DataPipelineConfig (unload, when no scriptS3Uri) and
+# LoadToSnowflakeConfig (load, always).
 _SNOWFLAKE_COPY_KEYS = ("database", "schema", "table", "warehouse")
+
+
+def _check_snowflake_copy_params(params: Dict[str, Any]) -> None:
+    missing = [k for k in _SNOWFLAKE_COPY_KEYS if not str(params.get(k) or "").strip()]
+    if missing:
+        raise ValueError(
+            f"snowflakeParams must include {missing} (they build the platform's COPY INTO statement)"
+        )
+    invalid = [k for k in _SNOWFLAKE_COPY_KEYS if not _SNOWFLAKE_IDENTIFIER_RE.match(str(params[k]))]
+    if invalid:
+        raise ValueError(
+            f"snowflakeParams{invalid} must be valid Snowflake identifiers "
+            "(letters, digits, _ and $ only, must not start with a digit)"
+        )
 
 
 class DataPipelineConfig(ApiModel):
@@ -58,24 +76,7 @@ class DataPipelineConfig(ApiModel):
     def _validate_snowflake_params(self) -> "DataPipelineConfig":
         if self.scriptS3Uri:
             return self  # opaque to the platform; the script owns its own validation
-        missing = [
-            k for k in _SNOWFLAKE_COPY_KEYS
-            if not str(self.snowflakeParams.get(k) or "").strip()
-        ]
-        if missing:
-            raise ValueError(
-                f"snowflakeParams must include {missing} when no scriptS3Uri is set "
-                "(they build the platform's COPY INTO unload)"
-            )
-        invalid = [
-            k for k in _SNOWFLAKE_COPY_KEYS
-            if not _SNOWFLAKE_IDENTIFIER_RE.match(str(self.snowflakeParams[k]))
-        ]
-        if invalid:
-            raise ValueError(
-                f"snowflakeParams{invalid} must be valid Snowflake identifiers "
-                "(letters, digits, _ and $ only, must not start with a digit)"
-            )
+        _check_snowflake_copy_params(self.snowflakeParams)
         return self
 
 
@@ -121,10 +122,37 @@ class ApprovalConfig(ApiModel):
     approverNote: Optional[str] = None
 
 
+class LoadToSnowflakeConfig(ApiModel):
+    """Loads a run's scored output back into Snowflake — the reverse of
+    DataPipelineConfig's unload. Always the pipeline's LAST step (see
+    pipeline_service.CANONICAL_STEP_ORDER): it only ever runs once a run has
+    cleared the quality gate and, if the pipeline has one, the approval gate
+    — a run that failed either never reaches this step, so nothing
+    unreviewed is ever published to Snowflake.
+
+    Unlike DataPipelineConfig, there is no `scriptS3Uri` escape hatch and no
+    author-supplied source URI: the source is always the run's own
+    execute_model output (resolved by job_service at step start, the same
+    resultsS3Prefix the data_quality_check step inspects) — never
+    configurable, so a load can never be pointed at stale or foreign data.
+    Each run APPENDS its rows to the destination table (COPY INTO, matched
+    by column name); nothing is ever overwritten."""
+
+    snowflakeParams: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_snowflake_params(self) -> "LoadToSnowflakeConfig":
+        _check_snowflake_copy_params(self.snowflakeParams)
+        return self
+
+
 class PipelineStep(ApiModel):
     step_id: str
     type: StepType
-    config: Union[DataPipelineConfig, ExecuteModelConfig, DataQualityCheckConfig, ApprovalConfig]
+    config: Union[
+        DataPipelineConfig, ExecuteModelConfig, DataQualityCheckConfig, ApprovalConfig,
+        LoadToSnowflakeConfig,
+    ]
     dependsOn: List[str] = Field(default_factory=list)
 
 
@@ -190,6 +218,7 @@ CONFIG_MODEL_BY_TYPE = {
     "execute_model": ExecuteModelConfig,
     "data_quality_check": DataQualityCheckConfig,
     "approval": ApprovalConfig,
+    "load_to_snowflake": LoadToSnowflakeConfig,
 }
 
 ALLOWED_STEP_TYPES = set(CONFIG_MODEL_BY_TYPE.keys())

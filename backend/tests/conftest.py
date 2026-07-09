@@ -177,6 +177,22 @@ def approval_step():
     return {"type": "approval", "config": {}}
 
 
+def load_step():
+    # Always the pipeline's LAST step -- no source field: the platform
+    # always loads the run's own execute_model output, never author-chosen.
+    return {
+        "type": "load_to_snowflake",
+        "config": {
+            "snowflakeParams": {
+                "database": "DB",
+                "schema": "SCH",
+                "table": "RESULTS",
+                "warehouse": "WH",
+            },
+        },
+    }
+
+
 def create_pipeline(client, steps=None, name="test-pipeline"):
     # Pipeline creation validates execute_model refs against the model
     # registry, so make sure every referenced model exists (409 = already

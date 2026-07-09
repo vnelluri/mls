@@ -7,6 +7,7 @@ import type {
   DataQualityConfig,
   ExecuteModelConfig,
   Job,
+  LoadToSnowflakeConfig,
   PipelineStep,
   StepType,
 } from '@/types/platform';
@@ -17,16 +18,20 @@ import { DataPipelineStepPanel } from '@/components/canvas/panels/DataPipelineSt
 import { ExecuteModelStepPanel } from '@/components/canvas/panels/ExecuteModelStepPanel';
 import { DataQualityStepPanel } from '@/components/canvas/panels/DataQualityStepPanel';
 import { ApprovalStepPanel } from '@/components/canvas/panels/ApprovalStepPanel';
+import { LoadToSnowflakeStepPanel } from '@/components/canvas/panels/LoadToSnowflakeStepPanel';
 
 const WIZARD_STEPS = ['Job Details', 'Pipeline', 'Review'] as const;
 
-const addableStepTypes: StepType[] = ['data_pipeline', 'execute_model', 'data_quality_check', 'approval'];
+const addableStepTypes: StepType[] = [
+  'data_pipeline', 'execute_model', 'data_quality_check', 'approval', 'load_to_snowflake',
+];
 
 const stepTypeHints: Record<StepType, string> = {
   data_pipeline: 'Snowflake → S3',
   execute_model: 'EMR Serverless',
   data_quality_check: 'DQ + drift checks',
   approval: 'Manual review gate',
+  load_to_snowflake: 'S3 → Snowflake',
 };
 
 function defaultConfigFor(type: StepType): PipelineStep['config'] {
@@ -50,6 +55,10 @@ function defaultConfigFor(type: StepType): PipelineStep['config'] {
       return { checks: [], inputS3Uri: '' } satisfies DataQualityConfig;
     case 'approval':
       return {} satisfies ApprovalConfig;
+    case 'load_to_snowflake':
+      // No source field: the platform always loads the run's own
+      // execute_model output, never author-chosen.
+      return { snowflakeParams: {} } satisfies LoadToSnowflakeConfig;
     default:
       throw new Error(`Unknown step type: ${type satisfies never}`);
   }
@@ -282,6 +291,12 @@ export function CreateJobWizard({
                       {step.type === 'approval' && (
                         <ApprovalStepPanel
                           config={step.config as ApprovalConfig}
+                          onChange={(c) => updateStepConfig(step.stepId, c)}
+                        />
+                      )}
+                      {step.type === 'load_to_snowflake' && (
+                        <LoadToSnowflakeStepPanel
+                          config={step.config as LoadToSnowflakeConfig}
                           onChange={(c) => updateStepConfig(step.stepId, c)}
                         />
                       )}

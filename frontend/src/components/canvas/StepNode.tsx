@@ -5,6 +5,7 @@ export const stepTypeLabels: Record<StepType, string> = {
   execute_model: 'Execute Model',
   data_quality_check: 'Data Quality Check',
   approval: 'Approval',
+  load_to_snowflake: 'Load to Snowflake',
 };
 
 const stepStatusVar: Record<StepStatus, string> = {
@@ -50,6 +51,14 @@ function TypeGlyph({ type }: { type: StepType }) {
         <svg width="20" height="20" viewBox="0 0 20 20">
           <circle cx="10" cy="7" r="3" {...common} />
           <path d="M4 17c0-3.3 2.7-6 6-6s6 2.7 6 6" {...common} />
+        </svg>
+      );
+    case 'load_to_snowflake':
+      return (
+        <svg width="20" height="20" viewBox="0 0 20 20">
+          <ellipse cx="10" cy="14" rx="7" ry="2.5" {...common} />
+          <path d="M3 14V8c0-1.4 3.1-2.5 7-2.5s7 1.1 7 2.5v6" {...common} />
+          <path d="M10 1v8m0 0l-2.5-2.5M10 9l2.5-2.5" {...common} strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
     default:

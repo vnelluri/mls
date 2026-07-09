@@ -24,10 +24,14 @@ def _gen_pipeline_id() -> str:
 
 
 # The execution engine (job_service._run_cascade) runs steps strictly in list
-# order, one of each type, with approval as the terminal human gate. Enforce
-# that shape at save time so a pipeline can never be stored that the engine
-# would silently truncate or mis-order.
-CANONICAL_STEP_ORDER = ["data_pipeline", "execute_model", "data_quality_check", "approval"]
+# order, one of each type. load_to_snowflake is the new terminal step (after
+# approval, when present): a run that failed the quality gate or is still
+# awaiting human approval never reaches it, so nothing unreviewed is ever
+# published to Snowflake. Enforce that shape at save time so a pipeline can
+# never be stored that the engine would silently truncate or mis-order.
+CANONICAL_STEP_ORDER = [
+    "data_pipeline", "execute_model", "data_quality_check", "approval", "load_to_snowflake",
+]
 
 
 def _validate_step_shape(normalized: List[dict]) -> None:
@@ -42,7 +46,7 @@ def _validate_step_shape(normalized: List[dict]) -> None:
     if order_indices != sorted(order_indices):
         raise bad_request(
             "Pipeline steps must follow the order "
-            f"{' -> '.join(CANONICAL_STEP_ORDER)} (each step optional, approval always last)"
+            f"{' -> '.join(CANONICAL_STEP_ORDER)} (each step optional)"
         )
 
     seen_ids = [s["step_id"] for s in normalized]

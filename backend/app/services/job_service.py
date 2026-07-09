@@ -4,14 +4,14 @@ Job lifecycle: submit, refresh/poll, stop, retry, approve/reject step.
 Step progression cascade (`_run_cascade`) walks the job's steps in the fixed
 order snapshotted from the pipeline at submit time:
 
-    data_pipeline -> execute_model -> data_quality_check -> [approval]
+    data_pipeline -> execute_model -> data_quality_check -> [approval] -> [load_to_snowflake]
 
-Steps execute one at a time. data_pipeline and execute_model start external
-compute and are completed by status polls on each refresh pass (the
-detail-page GET or the background loop); data_quality_check is timer-driven
-(STEP_DURATION_SECONDS in mock mode) and produces its output at completion.
-No thread is ever held while a step "runs" — long external work is polled,
-never awaited.
+Steps execute one at a time. data_pipeline, execute_model, and
+load_to_snowflake start external compute and are completed by status polls
+on each refresh pass (the detail-page GET or the background loop);
+data_quality_check is timer-driven (STEP_DURATION_SECONDS in mock mode) and
+produces its output at completion. No thread is ever held while a step
+"runs" — long external work is polled, never awaited.
 
 A data_pipeline step is backed by ONE of two executors, chosen by its
 config: the built-in Snowflake unload (data_pipeline_service) normally, or —
@@ -21,6 +21,13 @@ submitted to EMR Serverless exactly like an execute_model run
 Either way the step's `output.s3Uri` ends up in the same shape, so
 downstream steps (execute_model's input resolution) don't need to know or
 care which executor produced it.
+
+load_to_snowflake is always the pipeline's LAST step (enforced by
+pipeline_service.CANONICAL_STEP_ORDER): it loads the run's scored output
+back into Snowflake (the reverse of data_pipeline's unload — see
+snowflake_load_service), poll-driven the same way as the built-in unload.
+Because it only runs after the quality gate and any approval gate have
+already passed, nothing unreviewed is ever published.
 """
 import copy
 import hashlib
@@ -40,6 +47,7 @@ from app.services import audit_service, job_runner, monitoring_service
 from app.services.data_pipeline_service import get_data_pipeline_service
 from app.services.data_quality_service import get_data_quality_service
 from app.services.emr_execution_service import get_emr_execution_service
+from app.services.snowflake_load_service import get_snowflake_load_service
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +111,13 @@ def _cancel_emr_runs_lost_to_race(item: dict) -> None:
             logger.warning("Cancelling orphaned EMR run %s (job %s lost a write race)", run_id, item["job_id"])
             _cancel_emr_run(step)
         query_id = step.get("snowflakeQueryId")
-        if step["type"] == "data_pipeline" and query_id and query_id not in persisted_query_ids:
-            logger.warning("Cancelling orphaned Snowflake query %s (job %s lost a write race)", query_id, item["job_id"])
-            _cancel_pipeline_query(step)
+        if query_id and query_id not in persisted_query_ids:
+            if step["type"] == "data_pipeline":
+                logger.warning("Cancelling orphaned Snowflake query %s (job %s lost a write race)", query_id, item["job_id"])
+                _cancel_pipeline_query(step)
+            elif step["type"] == "load_to_snowflake":
+                logger.warning("Cancelling orphaned Snowflake load query %s (job %s lost a write race)", query_id, item["job_id"])
+                _cancel_load_query(step)
 
 
 def _persist_job_action(item: dict) -> dict:
@@ -199,7 +211,7 @@ def _blank_step(pipeline_step: dict) -> dict:
 # Step execution helpers (dummy runner: every step runs STEP_DURATION_SECONDS)
 # --------------------------------------------------------------------------
 
-RUNNABLE_STEP_TYPES = ("data_pipeline", "execute_model", "data_quality_check")
+RUNNABLE_STEP_TYPES = ("data_pipeline", "execute_model", "data_quality_check", "load_to_snowflake")
 
 
 def _elapsed_seconds(started_at_iso: str) -> float:
@@ -357,10 +369,31 @@ def _resolve_data_pipeline_script_config(item: dict, step: dict) -> dict:
     return resolved
 
 
+def _resolve_load_to_snowflake_config(item: dict, step: dict) -> dict:
+    """The `resolved` overlay for a load_to_snowflake step: its source is
+    ALWAYS the run's own execute_model output — never author-configurable
+    (LoadToSnowflakeConfig has no source field at all) — the same
+    resultsS3Prefix the data_quality_check step inspects, so a load can
+    never be pointed at stale or foreign data.
+
+    Raises RuntimeError if there's no upstream execute_model output to load
+    from — shouldn't happen given pipeline_service.CANONICAL_STEP_ORDER, but
+    the step must fail loudly rather than silently loading nothing."""
+    exec_step = next((s for s in item["steps"] if s["type"] == "execute_model"), None)
+    results_prefix = ((exec_step or {}).get("output") or {}).get("resultsS3Prefix")
+    if not results_prefix:
+        raise RuntimeError(
+            "load_to_snowflake has no upstream execute_model output to load from — "
+            "the pipeline must include an execute_model step before it"
+        )
+    return {"sourceS3Uri": results_prefix}
+
+
 def _start_step(item: dict, step: dict) -> None:
-    """Start a step. execute_model and data_pipeline kick off external
-    compute (EMR run / Snowflake query) and are completed by status polls;
-    data_quality_check is timer-driven (STEP_DURATION_SECONDS).
+    """Start a step. execute_model, data_pipeline, and load_to_snowflake
+    kick off external compute (EMR run / Snowflake query) and are completed
+    by status polls; data_quality_check is timer-driven
+    (STEP_DURATION_SECONDS).
 
     A resolution or submit failure fails the STEP (with the reason on it),
     never escapes: an escaped exception would 500 the triggering request and
@@ -383,6 +416,10 @@ def _start_step(item: dict, step: dict) -> None:
             if base:
                 step["resolved"] = {"destinationS3Uri": _run_scoped_prefix(base, item["run_id"])}
             result = get_data_pipeline_service().start(_service_config(step))
+            step["snowflakeQueryId"] = result["queryId"]
+        elif step["type"] == "load_to_snowflake":
+            step["resolved"] = _resolve_load_to_snowflake_config(item, step)
+            result = get_snowflake_load_service().start(_service_config(step))
             step["snowflakeQueryId"] = result["queryId"]
     except Exception as exc:
         logger.exception("Failed to start %s step %s of job %s", step["type"], step["step_id"], item["job_id"])
@@ -475,6 +512,66 @@ def _poll_pipeline_status(step: dict) -> dict:
             step.get("snowflakeQueryId"),
         )
         return {"state": "RUNNING", "stateDetail": "Status poll failed; will retry"}
+
+
+def _cancel_load_query(step: dict) -> None:
+    """Best-effort Snowflake load-query cancellation (stop_job / step
+    timeout)."""
+    if not step.get("snowflakeQueryId"):
+        return
+    try:
+        get_snowflake_load_service().cancel(step["snowflakeQueryId"], _service_config(step))
+    except Exception:
+        logger.exception("Failed to cancel Snowflake load query %s", step.get("snowflakeQueryId"))
+
+
+def _poll_load_status(step: dict) -> dict:
+    """Poll the Snowflake-load executor for the step's query state. A poll
+    failure is treated as still-running (the next refresh retries; the step
+    timeout is the backstop), never as step failure."""
+    try:
+        return get_snowflake_load_service().get_status(
+            step.get("snowflakeQueryId") or "", step.get("startedAt"), _service_config(step)
+        )
+    except Exception:
+        logger.exception(
+            "Snowflake load status poll failed for query %s -- retrying next pass",
+            step.get("snowflakeQueryId"),
+        )
+        return {"state": "RUNNING", "stateDetail": "Status poll failed; will retry"}
+
+
+def _refresh_load_to_snowflake_step(item: dict, step: dict) -> Optional[bool]:
+    """Advance a running load_to_snowflake step from the executor's actual
+    query state. Same terminal-state handling as _refresh_data_pipeline_step,
+    mirrored for the reverse (S3 -> Snowflake) direction. Returns True if the
+    item was mutated, False if not, and None if another writer already
+    advanced this run (the caller must stop -- `item` now holds the adopted
+    fresh state)."""
+    load_status = _poll_load_status(step)
+    state = load_status.get("state", "RUNNING")
+
+    if state == "SUCCESS":
+        if not _still_running_in_db(item, step["step_id"]):
+            return None
+        step["completedAt"] = _now()
+        step["status"] = "succeeded"
+        step["output"] = load_status.get("output") or {}
+        job_runner.finish_step(item, step)
+        _run_cascade(item)
+        return True
+
+    if state in ("FAILED", "CANCELLED"):
+        if not _still_running_in_db(item, step["step_id"]):
+            return None
+        _fail_step(
+            item, step,
+            f"Snowflake load ended in {state}: {load_status.get('stateDetail') or 'no detail provided'}",
+        )
+        job_runner.finish_step(item, step)
+        return True
+
+    return False
 
 
 def _job_model_ref(item: dict) -> Optional[tuple]:
@@ -782,6 +879,8 @@ def _refresh_running_steps(item: dict) -> bool:
                 _cancel_emr_run(step)
             elif step["type"] == "data_pipeline":
                 _cancel_pipeline_query(step)
+            elif step["type"] == "load_to_snowflake":
+                _cancel_load_query(step)
             _fail_step(
                 item, step,
                 f"Step timed out after {int(elapsed)}s (STEP_TIMEOUT_SECONDS={settings.STEP_TIMEOUT_SECONDS})",
@@ -799,6 +898,13 @@ def _refresh_running_steps(item: dict) -> bool:
 
         if step["type"] == "data_pipeline":
             result = _refresh_data_pipeline_step(item, step)
+            if result is None:
+                return False  # another writer already advanced this run
+            changed = changed or result
+            continue
+
+        if step["type"] == "load_to_snowflake":
+            result = _refresh_load_to_snowflake_step(item, step)
             if result is None:
                 return False  # another writer already advanced this run
             changed = changed or result
@@ -1171,6 +1277,8 @@ def stop_job(current_user: CurrentUser, job_id: str, tenant_id: Optional[str] = 
             _cancel_emr_run(step)
         elif step["type"] == "data_pipeline":
             _cancel_pipeline_query(step)
+        elif step["type"] == "load_to_snowflake":
+            _cancel_load_query(step)
 
     item["status"] = "cancelled"
     _persist_job_action(item)

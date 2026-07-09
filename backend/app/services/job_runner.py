@@ -36,10 +36,21 @@ def run_data_quality_check(job_id: str, run_id: str, step_id: str, config: dict)
     )
 
 
+def run_load_to_snowflake(job_id: str, run_id: str, step_id: str, config: dict) -> None:
+    params = config.get("snowflakeParams") or {}
+    table = f"{params.get('database', '?')}.{params.get('schema', '?')}.{params.get('table', '?')}"
+    print(
+        f"[job-runner] job={job_id} run={run_id} step={step_id} "
+        f"START load_to_snowflake: -> {table}",
+        flush=True,
+    )
+
+
 START_BY_TYPE = {
     "data_pipeline": run_data_pipeline,
     "execute_model": run_execute_model,
     "data_quality_check": run_data_quality_check,
+    "load_to_snowflake": run_load_to_snowflake,
 }
 
 
