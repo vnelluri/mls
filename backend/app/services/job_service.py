@@ -1522,18 +1522,27 @@ def reject_step(current_user: CurrentUser, job_id: str, step_id: str) -> dict:
 
 async def background_refresh_running_jobs() -> int:
     """Called every JOB_REFRESH_INTERVAL_SECONDS by the startup background
-    task, and usable directly in tests. Returns the number of jobs updated."""
+    task, and usable directly in tests. Returns the number of jobs updated.
+
+    Each job is refreshed on its own thread, bounded by a semaphore, rather
+    than one job at a time on a single thread: a slow/hung EMR or Snowflake
+    call for one job now only occupies one concurrency slot instead of
+    stalling every other tenant's refresh for the whole pass."""
     import asyncio
 
-    def _do_refresh() -> int:
-        updated = 0
-        running_jobs = job_repo.list_jobs_by_status("running")
-        for item in running_jobs:
+    running_jobs = await asyncio.to_thread(job_repo.list_jobs_by_status, "running")
+    semaphore = asyncio.Semaphore(settings.JOB_REFRESH_MAX_CONCURRENCY)
+
+    async def _refresh_one(item: dict) -> bool:
+        def _sync() -> bool:
+            return bool(_refresh_running_steps(item) and _persist_refresh(item))
+
+        async with semaphore:
             try:
-                if _refresh_running_steps(item) and _persist_refresh(item):
-                    updated += 1
+                return await asyncio.to_thread(_sync)
             except Exception:
                 logger.exception("Background refresh failed for job %s", item.get("job_id"))
-        return updated
+                return False
 
-    return await asyncio.to_thread(_do_refresh)
+    results = await asyncio.gather(*(_refresh_one(item) for item in running_jobs))
+    return sum(results)

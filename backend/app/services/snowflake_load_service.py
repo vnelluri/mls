@@ -296,6 +296,10 @@ class RealSnowflakeLoadService(SnowflakeLoadService):
             "account": settings.SNOWFLAKE_ACCOUNT,
             "user": settings.SNOWFLAKE_USER,
             "client_session_keep_alive": False,
+            # Bounds a hung connect/poll so it can't stall the shared refresh
+            # loop (or a synchronous GET /jobs/{id} request) indefinitely.
+            "login_timeout": settings.SNOWFLAKE_LOGIN_TIMEOUT_SECONDS,
+            "network_timeout": settings.SNOWFLAKE_NETWORK_TIMEOUT_SECONDS,
         }
         if settings.SNOWFLAKE_ROLE:
             kwargs["role"] = settings.SNOWFLAKE_ROLE

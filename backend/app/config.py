@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # STORAGE INTEGRATION used by COPY INTO unloads — S3 access is granted
     # Snowflake-side; no AWS credentials ever appear in SQL.
     SNOWFLAKE_STORAGE_INTEGRATION: str = ""
+    # Caps how long a single connect/poll/cancel call can hang: without these
+    # the connector's own defaults apply (effectively unbounded for a dead
+    # network path), which can stall a refresh-loop pass or a synchronous
+    # per-request refresh (GET /jobs/{id}) indefinitely.
+    SNOWFLAKE_LOGIN_TIMEOUT_SECONDS: int = 10
+    SNOWFLAKE_NETWORK_TIMEOUT_SECONDS: int = 15
 
     # ---- Data-quality engine (DQ_MODE=real only) ---------------------------
     # Byte budget for reading a run's scoring output from S3: files beyond
@@ -95,6 +101,10 @@ class Settings(BaseSettings):
 
     # ---- Background job refresh loop --------------------------------------
     JOB_REFRESH_INTERVAL_SECONDS: int = 30
+    # Bounds how many jobs the refresh loop polls (EMR/Snowflake) at once, so
+    # one slow external call only occupies one slot instead of stalling every
+    # tenant's refresh for the whole pass.
+    JOB_REFRESH_MAX_CONCURRENCY: int = 10
     # Dummy job runner: how long each timer-driven pipeline step
     # (data_pipeline, data_quality_check) "executes" before it completes and
     # the next step starts. execute_model steps are NOT timer-driven -- they
