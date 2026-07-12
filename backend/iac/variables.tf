@@ -176,6 +176,17 @@ variable "dq_s3_read_arns" {
   default     = []
 }
 
+variable "artifacts_bucket_name" {
+  description = <<-EOT
+    Existing S3 bucket for model-artifact uploads (the backend's
+    S3_ARTIFACTS_BUCKET, default mlserv-artifacts). Grants the task role
+    put/get on "<bucket>/*" when set; empty = no policy attached (uploads
+    will 500 in that case).
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "entra_parameter_arns" {
   description = <<-EOT
     SSM parameter ARNs for the Entra ID settings, injected as container

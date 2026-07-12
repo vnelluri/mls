@@ -305,6 +305,31 @@ export interface JobStats {
   byStatus: Record<JobStatus, number>;
 }
 
+/** One tenant's EMR Serverless application ("cluster"): state, capacity,
+ * run counts, and an ESTIMATED utilization (derived from run counts, not
+ * CloudWatch — hence `estimated`) for the dashboard's capacity meter. */
+export interface EmrApplication {
+  tenantId: string;
+  applicationId: string;
+  state: string;
+  maxCpu: string;
+  maxMemory: string;
+  runningJobRuns: number;
+  queuedJobRuns: number;
+  maxVcpu: number | null;
+  allocatedVcpuEstimate: number;
+  utilizationPct: number | null;
+  estimated: boolean;
+}
+
+/** execute_model (EMR) steps across visible jobs, bucketed by step status —
+ * the platform's mirror of the EMR Serverless run state. */
+export interface EmrStats {
+  total: number;
+  byStatus: Record<StepStatus, number>;
+  applications: EmrApplication[];
+}
+
 export interface ModelStats {
   total: number;
   byStage: Record<ModelStage, number>;
@@ -317,6 +342,7 @@ export interface DashboardSummary {
   tenantCount: number | null;
   pipelines: PipelineStats;
   jobs: JobStats;
+  emr: EmrStats;
   models: ModelStats;
   recentJobs: Job[];
   recentAuditEvents: AuditEvent[];

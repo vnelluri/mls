@@ -21,6 +21,7 @@ os.environ.update(
     {
         "AUTH_MODE": "dev",
         "DDB_ENDPOINT_URL": "",  # blank -> boto3 "real AWS" -> intercepted by mock_aws
+        "S3_ENDPOINT_URL": "",  # same: mock_aws intercepts S3 too
         "AWS_ACCESS_KEY_ID": "testing",
         "AWS_SECRET_ACCESS_KEY": "testing",
         "AWS_REGION": "us-east-1",
@@ -47,6 +48,7 @@ import scripts.create_tables as create_tables  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import client as db_client  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import artifact_service  # noqa: E402
 from app.services import emr_execution_service as emr  # noqa: E402
 
 TERMINAL = {"success", "failed", "cancelled", "awaiting_approval"}
@@ -58,10 +60,12 @@ def aws():
     with mock_aws():
         db_client.get_dynamodb_resource.cache_clear()
         db_client.get_dynamodb_client.cache_clear()
+        artifact_service.get_s3_client.cache_clear()
         create_tables.main()
         yield
     db_client.get_dynamodb_resource.cache_clear()
     db_client.get_dynamodb_client.cache_clear()
+    artifact_service.get_s3_client.cache_clear()
 
 
 @pytest.fixture()

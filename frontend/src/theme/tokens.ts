@@ -4,22 +4,32 @@
  * tailwind.config.js reads this file directly (via require at config-eval
  * time) and theme.css.ts generates the raw CSS custom properties from the
  * same values, so the hex values are only ever written once, here.
+ *
+ * The token NAMES are the historical Truist palette names; the VALUES now
+ * follow the TMT light theme (see ~/tmt/frontend/tailwind.config.ts) so both
+ * platforms share one look. Semantic mapping:
+ *   purple   → brand accent (buttons, links, active nav) — reads on white
+ *   valhalla → dark brand surface (topbar, login hero) only
+ *   charcoal/darkGray/midGray → text primary/secondary/muted
+ *   tint08 → page bg, tint07/gray06 → elevated fills & borders
+ *   skyBlue → focus ring (now brand purple, name kept to avoid a mass rename)
  */
 
 export const truistColors = {
-  purple: '#2e1a47',
+  purple: '#6c63c5',
+  valhalla: '#2e1a47',
   white: '#ffffff',
-  dusk: '#7c6992',
-  dawn: '#afabc9',
-  charcoal: '#34363b',
-  darkGray: '#707070',
-  midGray: '#a8a8a8',
-  lightGray: '#c9c9c9',
-  skyBlue: '#b0e0e2',
-  tint07: '#e3dfef',
-  tint08: '#f6f3f9',
-  gray06: '#ededed',
-  gray07: '#f7f7f7',
+  dusk: '#5b53b0',
+  dawn: '#a6a3e0',
+  charcoal: '#241e3d',
+  darkGray: '#5a5280',
+  midGray: '#8d86ad',
+  lightGray: '#d9d5ea',
+  skyBlue: '#6c63c5',
+  tint07: '#e8e5f2',
+  tint08: '#f4f3fa',
+  gray06: '#e8e5f2',
+  gray07: '#edebf5',
 } as const;
 
 export const statusColors = {

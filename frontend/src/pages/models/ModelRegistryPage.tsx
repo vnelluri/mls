@@ -197,7 +197,11 @@ export function ModelRegistryPage() {
             placeholder="xgboost, pytorch, sklearn…"
           />
         </Field>
-        <Field label="Artifact S3 URI" required>
+        <Field
+          label="Artifact S3 URI"
+          required
+          hint="Upload an artifact from the Dashboard to get a URI, or paste an existing one."
+        >
           <Input
             value={form.artifactS3Uri}
             onChange={(e) => setForm((f) => ({ ...f, artifactS3Uri: e.target.value }))}

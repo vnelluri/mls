@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Smoke test for the ML Serving & Monitoring Platform API.
+# Smoke test for the Truist Model Serving (TMS) API.
 #
 # Prereqs: `python scripts/dev.py` running in another terminal; bash, curl, jq.
 #

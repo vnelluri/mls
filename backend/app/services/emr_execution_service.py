@@ -58,6 +58,18 @@ class EmrExecutionService(abc.ABC):
         """Best-effort cancellation of a running job run (stop_job / timeout)."""
         ...
 
+    @abc.abstractmethod
+    def get_application(self, application_id: str) -> dict:
+        """Application-level ("cluster") stats for the dashboard:
+        {"state": str, "max_cpu": str, "max_memory": str}."""
+        ...
+
+    @abc.abstractmethod
+    def get_application(self, application_id: str) -> dict:
+        """EMR Serverless application ("cluster") stats:
+        {"state": str, "max_cpu": str, "max_memory": str}."""
+        ...
+
 
 def _elapsed_seconds(started_at_iso: str) -> float:
     started_at = datetime.fromisoformat(started_at_iso)
@@ -99,6 +111,11 @@ class MockEmrExecutionService(EmrExecutionService):
         # Nothing to cancel -- the mock holds no state. A cancelled job stops
         # being refreshed, so the simulated run simply never gets polled again.
         return None
+
+    def get_application(self, application_id: str) -> dict:
+        # ponytail: static STARTED + EMR Serverless default limits; live usage
+        # metrics would need CloudWatch even in real mode.
+        return {"state": "STARTED", "max_cpu": "400 vCPU", "max_memory": "3000 GB", "max_vcpu": 400}
 
 
 class RealEmrExecutionService(EmrExecutionService):
@@ -150,6 +167,15 @@ class RealEmrExecutionService(EmrExecutionService):
             applicationId=(step_config or {})["emrApplicationId"],
             jobRunId=emr_job_run_id,
         )
+
+    def get_application(self, application_id: str) -> dict:
+        app = self._client.get_application(applicationId=application_id)["application"]
+        cap = app.get("maximumCapacity", {})
+        return {
+            "state": app["state"],
+            "max_cpu": cap.get("cpu", ""),
+            "max_memory": cap.get("memory", ""),
+        }
 
 
 def get_emr_execution_service() -> EmrExecutionService:

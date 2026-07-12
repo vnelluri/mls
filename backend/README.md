@@ -1,4 +1,4 @@
-# ML Serving & Monitoring Platform — Backend
+# Truist Model Serving (TMS) — Backend
 
 Multi-tenant batch model-serving platform for a financial organization.
 FastAPI + DynamoDB. A **Pipeline** is a reusable template of typed steps
@@ -128,6 +128,7 @@ Every list endpoint returns `{"items": [...], "total": n, "page": n, "pageSize":
 | `POST /jobs/{id}/steps/{step_id}/approve` / `.../reject` | LeadDataScientist | 409 unless job **and** step are `awaiting_approval`; tenant re-verified after fetch; approve advances the cascade (steps after the gate still run) |
 | `POST /pipelines/{id}/promote` | LeadDataScientist | staging → production; requires a valid ServiceNow ticket and ≥1 successful run; activates a draft |
 | `POST /models` | LeadDataScientist | registers next version; stage `"None"`, monitoring `NotStarted` |
+| `POST /models/artifacts` | LeadDataScientist | multipart file upload into `S3_ARTIFACTS_BUCKET` under the tenant's `{tenant_id}/` prefix; returns the `artifactS3Uri` to register with |
 | `GET /models`, `GET /models/{name}/{version}` | any role | |
 | `PATCH /models/{name}/{version}/promote` | LeadDataScientist | body `{"targetStage": "Staging"}`; illegal transitions → 409 |
 | `GET /monitoring/snapshots` | any role | filters: `modelName`, `version`; **no write endpoint exists** — snapshots are only created internally on DQ-step completion (in one transaction with the model's denormalized status) |

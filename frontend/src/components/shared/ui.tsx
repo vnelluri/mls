@@ -25,7 +25,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         disabled={disabled}
-        className={`inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:cursor-not-allowed ${sizeClasses} ${buttonVariantClasses[variant]} ${className}`}
+        className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-truist-purple focus-visible:ring-offset-1 disabled:cursor-not-allowed ${sizeClasses} ${buttonVariantClasses[variant]} ${className}`}
         {...props}
       />
     );
@@ -38,7 +38,7 @@ Button.displayName = 'Button';
 // ---------------------------------------------------------------------------
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-lg border border-truist-gray06 bg-white p-5 shadow-sm ${className}`}>
+    <div className={`rounded-xl border border-truist-gray06 bg-white p-5 ${className}`}>
       {children}
     </div>
   );
@@ -74,7 +74,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   ({ className = '', ...props }, ref) => (
     <input
       ref={ref}
-      className={`w-full rounded-md border border-truist-lightGray px-3 py-2 text-sm text-truist-charcoal focus:border-truist-purple focus:outline-none focus:ring-2 focus:ring-truist-skyBlue disabled:bg-truist-gray07 disabled:text-truist-midGray ${className}`}
+      className={`w-full rounded-lg border border-truist-lightGray px-3 py-2 text-sm text-truist-charcoal focus:border-truist-purple focus:outline-none focus:ring-2 focus:ring-truist-skyBlue disabled:bg-truist-gray07 disabled:text-truist-midGray ${className}`}
       {...props}
     />
   ),
@@ -85,7 +85,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   ({ className = '', children, ...props }, ref) => (
     <select
       ref={ref}
-      className={`w-full rounded-md border border-truist-lightGray bg-white px-3 py-2 text-sm text-truist-charcoal focus:border-truist-purple focus:outline-none focus:ring-2 focus:ring-truist-skyBlue disabled:bg-truist-gray07 disabled:text-truist-midGray ${className}`}
+      className={`w-full rounded-lg border border-truist-lightGray bg-white px-3 py-2 text-sm text-truist-charcoal focus:border-truist-purple focus:outline-none focus:ring-2 focus:ring-truist-skyBlue disabled:bg-truist-gray07 disabled:text-truist-midGray ${className}`}
       {...props}
     >
       {children}
@@ -98,7 +98,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   ({ className = '', ...props }, ref) => (
     <textarea
       ref={ref}
-      className={`w-full rounded-md border border-truist-lightGray px-3 py-2 text-sm text-truist-charcoal focus:border-truist-purple focus:outline-none focus:ring-2 focus:ring-truist-skyBlue disabled:bg-truist-gray07 disabled:text-truist-midGray ${className}`}
+      className={`w-full rounded-lg border border-truist-lightGray px-3 py-2 text-sm text-truist-charcoal focus:border-truist-purple focus:outline-none focus:ring-2 focus:ring-truist-skyBlue disabled:bg-truist-gray07 disabled:text-truist-midGray ${className}`}
       {...props}
     />
   ),
@@ -123,16 +123,18 @@ export function Modal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-truist-charcoal/50 p-4">
-      <div className={`w-full ${width} max-h-[90vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className={`w-full ${width} max-h-[90vh] overflow-y-auto rounded-xl border border-truist-gray06 bg-white p-6 shadow-2xl`}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-truist-purple">{title}</h2>
+          <h2 className="text-lg font-semibold text-truist-charcoal">{title}</h2>
           <button
             aria-label="Close"
             onClick={onClose}
-            className="rounded p-1 text-truist-darkGray hover:bg-truist-gray07"
+            className="rounded-lg p-1 text-truist-darkGray transition hover:bg-truist-tint07 hover:text-truist-charcoal"
           >
-            ✕
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
           </button>
         </div>
         {children}

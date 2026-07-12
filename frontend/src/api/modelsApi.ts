@@ -48,6 +48,24 @@ export async function registerModel(input: RegisterModelInput): Promise<Register
   return res.data;
 }
 
+export interface ArtifactUploadResult {
+  artifactS3Uri: string;
+  fileName: string;
+  sizeBytes: number;
+}
+
+/** Streams a model artifact into the platform artifacts bucket (under the
+ * tenant's prefix) and returns the S3 URI to register the model with. */
+export async function uploadArtifact(file: File): Promise<ArtifactUploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiClient.post<ArtifactUploadResult>('/models/artifacts', form, {
+    // Artifacts can be large; the client-wide 15s timeout is too tight here.
+    timeout: 5 * 60_000,
+  });
+  return res.data;
+}
+
 export async function promoteModel(
   modelName: string,
   version: string,

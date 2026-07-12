@@ -81,6 +81,20 @@ export function EnvironmentBadge({ environment }: { environment: PipelineEnviron
   );
 }
 
+// EMR Serverless application ("cluster") lifecycle states, toned like TMT's
+// compute panel: green while serving, amber in transition, gray at rest.
+const emrAppStateVar: Record<string, string> = {
+  STARTED: '--status-passed',
+  CREATING: '--status-rework',
+  STARTING: '--status-rework',
+  STOPPING: '--status-rework',
+};
+
+/** EMR Serverless application state (STARTED, STOPPED, …). */
+export function EmrAppStateBadge({ state }: { state: string }) {
+  return <Pill label={state.toLowerCase()} cssVar={emrAppStateVar[state] ?? '--status-not-started'} />;
+}
+
 /** Generic entry point when the status "kind" isn't known statically. */
 export function StatusBadge({
   kind,

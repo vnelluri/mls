@@ -1,12 +1,17 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile
 
 from app.auth.dependencies import require_role, require_tenant_scoped_role
 from app.core.pagination import paginate
 from app.schemas.common import CurrentUser, PageEnvelope
-from app.schemas.model_registry import Model, ModelPromoteRequest, ModelRegisterRequest
-from app.services import model_registry_service
+from app.schemas.model_registry import (
+    ArtifactUploadResponse,
+    Model,
+    ModelPromoteRequest,
+    ModelRegisterRequest,
+)
+from app.services import artifact_service, model_registry_service
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -19,6 +24,16 @@ def register_model(
     data: ModelRegisterRequest, current_user: CurrentUser = Depends(require_tenant_scoped_role(*WRITE_ROLES))
 ):
     return model_registry_service.register_model(current_user, data)
+
+
+@router.post("/artifacts", response_model=ArtifactUploadResponse, status_code=201)
+def upload_artifact(
+    file: UploadFile,
+    current_user: CurrentUser = Depends(require_tenant_scoped_role(*WRITE_ROLES)),
+):
+    """Upload a model artifact (multipart file) into the tenant's prefix of
+    the shared artifacts bucket; register the model with the returned URI."""
+    return artifact_service.upload_artifact(current_user, file.filename or "", file.file)
 
 
 @router.get("", response_model=PageEnvelope[Model])

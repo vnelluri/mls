@@ -1,4 +1,4 @@
-# ML Serving & Monitoring Platform — Frontend
+# Truist Model Serving (TMS) — Frontend
 
 React + TypeScript + Vite frontend for the batch ML-serving and monitoring platform. Independent
 companion to the ML *training* platform — its own tenants, its own auth state, no shared data.

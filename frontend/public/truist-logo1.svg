@@ -1,0 +1,24 @@
+<svg version="1.1" id="Layer_1" xmlns:x="ns_extend;" xmlns:i="ns_ai;" xmlns:graph="ns_graphs;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 55 55" style="enable-background:new 0 0 55 55;" xml:space="preserve">
+ <style type="text/css">
+  .st0{fill-rule:evenodd;clip-rule:evenodd;fill:#2E1A47;}
+ </style>
+ <metadata>
+  <sfw xmlns="ns_sfw;">
+   <slices>
+   </slices>
+   <sliceSourceBounds bottomLeftOrigin="true" height="55" width="55" x="123.7" y="21.9">
+   </sliceSourceBounds>
+  </sfw>
+ </metadata>
+ <g>
+  <g id="svg_1">
+   <g id="truist-logo">
+    <g id="global_x2F_truist-logo--purple">
+     <path id="tru_lg_hrz_rgb_pos" class="st0" d="M50.4,50.4V30.2h-14v10h-5.3V14.8h5.3v10h14V4.6H4.6v20.2h14v-10h5.3v25.4h-5.3
+					v-10h-14v20.2H50.4z M0,50V5c0-3.1,1.9-5,5-5H50c3.1,0,5,1.9,5,5V50c0,3.1-1.9,5-5,5H5C1.9,55,0,53.1,0,50z">
+     </path>
+    </g>
+   </g>
+  </g>
+ </g>
+</svg>

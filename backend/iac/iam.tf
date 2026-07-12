@@ -142,3 +142,28 @@ resource "aws_iam_role_policy" "task_dq_s3" {
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task_dq_s3.json
 }
+
+# Artifacts bucket: model-artifact uploads (POST /models/artifacts). Write +
+# head only -- the API never reads artifacts back (EMR job execution roles
+# carry the read grants); deliberately no s3:DeleteObject or s3:CreateBucket
+# (the bucket is provisioned out-of-band, matching artifacts_bucket_name).
+data "aws_iam_policy_document" "task_artifacts_s3" {
+  statement {
+    sid       = "ArtifactUploadWrite"
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["arn:aws:s3:::${var.artifacts_bucket_name}/*"]
+  }
+
+  statement {
+    sid       = "ArtifactBucketHead"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${var.artifacts_bucket_name}"]
+  }
+}
+
+resource "aws_iam_role_policy" "task_artifacts_s3" {
+  count  = var.artifacts_bucket_name != "" ? 1 : 0
+  name   = "artifacts-bucket-upload"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task_artifacts_s3.json
+}

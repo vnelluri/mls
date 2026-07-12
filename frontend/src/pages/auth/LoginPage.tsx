@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
-import { Button, Card, InlineAlert } from '@/components/shared/ui';
+import { Button, InlineAlert } from '@/components/shared/ui';
 import type { Role } from '@/types/platform';
 
 const roleOptions: { role: Role; label: string; description: string }[] = [
@@ -44,62 +44,96 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-truist-tint08 px-4">
-      <Card className="w-full max-w-md">
-        <div className="mb-6 text-center">
-          <div className="mb-2 text-2xl font-bold text-truist-purple">ML Serving &amp; Monitoring</div>
-          <p className="text-sm text-truist-darkGray">Sign in to continue</p>
+    <div className="flex min-h-screen bg-truist-tint08">
+      {/* Left panel — branded hero, stays valhalla-dark (same as TMT) */}
+      <div className="login-grid-pattern relative hidden w-1/2 flex-col justify-between overflow-hidden bg-truist-valhalla bg-gradient-to-br from-truist-valhalla via-truist-valhalla to-[#1a0f2e] p-12 lg:flex">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+        <div className="relative z-10 flex items-center gap-3">
+          <img src="/truist-logo1.svg" alt="Truist" className="logo-invert h-10 w-10" />
+          <span className="text-lg font-semibold text-white">Truist</span>
         </div>
+        <div className="relative z-10 max-w-md">
+          <h1 className="text-4xl font-semibold leading-tight text-white">
+            Truist Model Serving (TMS)
+          </h1>
+          <p className="mt-4 text-truist-dawn/90">
+            Submit batch scoring jobs, monitor pipelines, and govern model runs across every
+            business unit — with tenancy and access derived directly from Entra ID.
+          </p>
+        </div>
+        <p className="relative z-10 text-xs text-white/40">
+          © {new Date().getFullYear()} Truist Financial Corporation. Internal use only.
+        </p>
+      </div>
 
-        {error && (
-          <div className="mb-4">
-            <InlineAlert kind="error">{error}</InlineAlert>
+      {/* Right panel — sign-in form */}
+      <div className="flex w-full flex-col items-center justify-center px-6 lg:w-1/2">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 text-center lg:hidden">
+            <img src="/truist-logo1.svg" alt="Truist" className="mx-auto mb-3 h-10 w-10" />
+            <h1 className="text-xl font-semibold text-truist-charcoal">Truist Model Serving (TMS)</h1>
           </div>
-        )}
 
-        {demoMode ? (
-          <>
-            <div className="mb-4">
-              <InlineAlert kind="info">
-                Local dev demo mode. This role selector is cosmetic only — the actual role always
-                comes from the backend's <code>/auth/me</code> response, controlled by the backend's
-                own dev auth configuration.
-              </InlineAlert>
+          <h2 className="text-2xl font-semibold text-truist-charcoal">Sign in</h2>
+          <p className="mt-1 text-sm text-truist-darkGray">
+            {demoMode
+              ? 'Local demo mode — pick a role to explore the platform.'
+              : 'Sign in with your Truist Microsoft account.'}
+          </p>
+
+          {error && (
+            <div className="mt-4">
+              <InlineAlert kind="error">{error}</InlineAlert>
             </div>
-            <div className="mb-5 space-y-2">
+          )}
+
+          {demoMode ? (
+            <div className="mt-6 space-y-2">
               {roleOptions.map((opt) => (
-                <label
+                <button
                   key={opt.role}
-                  className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors ${
+                  aria-pressed={selected === opt.role}
+                  onClick={() => setSelected(opt.role)}
+                  className={`w-full rounded-xl border px-4 py-3 text-left transition ${
                     selected === opt.role
-                      ? 'border-truist-purple bg-truist-tint07'
-                      : 'border-truist-lightGray hover:bg-truist-gray07'
+                      ? 'border-truist-purple bg-truist-purple/10'
+                      : 'border-truist-gray06 bg-white hover:border-truist-purple/40'
                   }`}
                 >
-                  <input
-                    type="radio"
-                    name="role"
-                    className="mt-1"
-                    checked={selected === opt.role}
-                    onChange={() => setSelected(opt.role)}
-                  />
-                  <span>
-                    <span className="block text-sm font-medium text-truist-charcoal">{opt.label}</span>
-                    <span className="block text-xs text-truist-darkGray">{opt.description}</span>
-                  </span>
-                </label>
+                  <p className="text-sm font-semibold text-truist-charcoal">{opt.label}</p>
+                  <p className="mt-0.5 text-xs text-truist-darkGray">{opt.description}</p>
+                </button>
               ))}
+              <Button
+                className="mt-4 w-full"
+                onClick={handleDemoLogin}
+                disabled={signingIn || loading}
+              >
+                {signingIn || loading ? 'Signing in…' : `Continue as ${roleOptions.find((o) => o.role === selected)?.label}`}
+              </Button>
+              <p className="mt-3 text-center text-[11px] text-truist-midGray">
+                The demo role selector is cosmetic only — the actual role always comes from the
+                backend's <code>/auth/me</code> response, controlled by the backend's own dev
+                auth configuration.
+              </p>
             </div>
-            <Button className="w-full" onClick={handleDemoLogin} disabled={signingIn || loading}>
-              {signingIn || loading ? 'Signing in…' : 'Continue'}
+          ) : (
+            <Button
+              className="mt-6 w-full gap-3"
+              onClick={() => void loginWithMsal()}
+              disabled={loading}
+            >
+              <svg width="18" height="18" viewBox="0 0 21 21" fill="none" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+              </svg>
+              Sign in with Microsoft
             </Button>
-          </>
-        ) : (
-          <Button className="w-full" onClick={() => void loginWithMsal()} disabled={loading}>
-            Sign in with Microsoft
-          </Button>
-        )}
-      </Card>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

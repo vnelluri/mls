@@ -1,5 +1,5 @@
 """
-ML Serving & Monitoring Platform — API entry point.
+Truist Model Serving (TMS) — API entry point.
 
 Wires every router, CORS, and the background job-refresh loop. The refresh
 loop is a plain asyncio task (no separate worker process) so local dev stays
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ML Serving & Monitoring Platform",
+    title="Truist Model Serving (TMS)",
     version="1.0.0",
     lifespan=lifespan,
 )

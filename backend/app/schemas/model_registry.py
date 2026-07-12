@@ -73,6 +73,14 @@ class ModelPromoteRequest(ApiModel):
     targetStage: ModelStage
 
 
+class ArtifactUploadResponse(ApiModel):
+    """Result of POST /models/artifacts -- the URI to register with."""
+
+    artifactS3Uri: str
+    fileName: str
+    sizeBytes: int
+
+
 class Model(ApiModel):
     tenant_id: str
     model_name: str

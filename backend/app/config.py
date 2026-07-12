@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str = "test"
     AWS_SECRET_ACCESS_KEY: str = "test"
 
+    # ---- S3 artifacts bucket ----------------------------------------------
+    # Shared artifacts bucket; every tenant's uploads live under a
+    # "{tenant_id}/" prefix. In dev the same moto server that emulates
+    # DynamoDB serves S3 (leave unset/empty in prod for real S3).
+    S3_ENDPOINT_URL: Optional[str] = "http://127.0.0.1:5000"
+    S3_ARTIFACTS_BUCKET: str = "mlserv-artifacts"
+
     # DynamoDB table names
     TABLE_TENANTS: str = "mlserv-tenants"
     TABLE_GROUP_MAPPINGS: str = "mlserv-group-mappings"

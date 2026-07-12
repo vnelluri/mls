@@ -11,6 +11,7 @@ export default {
       colors: {
         truist: {
           purple: truistColors.purple,
+          valhalla: truistColors.valhalla,
           white: truistColors.white,
           dusk: truistColors.dusk,
           dawn: truistColors.dawn,
@@ -33,7 +34,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Segoe UI', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
     },
   },

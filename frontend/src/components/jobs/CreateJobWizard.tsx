@@ -68,6 +68,23 @@ function newStepId(): string {
   return `step-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function Chevron({ dir }: { dir: 'up' | 'down' }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+      className={dir === 'up' ? 'rotate-180' : ''}
+    >
+      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /** Keep the steps a linear chain: each step depends on the one before it. */
 function rechain(steps: PipelineStep[]): PipelineStep[] {
   return steps.map((s, i) => ({ ...s, dependsOn: i === 0 ? [] : [steps[i - 1].stepId] }));
@@ -151,25 +168,32 @@ export function CreateJobWizard({
 
   return (
     <Modal open={open} onClose={onClose} title="Create new job" width="max-w-3xl">
-      {/* Progress tabs */}
-      <div className="mb-4 flex border-b border-truist-gray06">
+      {/* Step indicator — numbered circles with connectors, same as TMT */}
+      <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-1">
         {WIZARD_STEPS.map((label, i) => (
-          <button
-            key={label}
-            onClick={() => i < page && setPage(i)}
-            className={`flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              i === page
-                ? 'border-truist-purple text-truist-purple'
-                : i < page
-                  ? 'cursor-pointer border-[color:var(--status-passed)] text-[color:var(--status-passed)]'
-                  : 'cursor-default border-transparent text-truist-midGray'
-            }`}
-          >
-            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-current text-xs">
-              {i < page ? '✓' : i + 1}
+          <div key={label} className="flex flex-shrink-0 items-center gap-2">
+            <button
+              onClick={() => i < page && setPage(i)}
+              disabled={i > page}
+              className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition ${
+                i === page
+                  ? 'bg-truist-purple text-white'
+                  : i < page
+                    ? 'bg-truist-purple/20 text-truist-purple'
+                    : 'bg-truist-tint07 text-truist-midGray'
+              }`}
+            >
+              {i + 1}
+            </button>
+            <span
+              className={`text-xs font-medium ${
+                i === page ? 'text-truist-charcoal' : 'text-truist-midGray'
+              }`}
+            >
+              {label}
             </span>
-            {label}
-          </button>
+            {i < WIZARD_STEPS.length - 1 && <span className="mx-1 h-px w-6 bg-truist-gray06" />}
+          </div>
         ))}
       </div>
 
@@ -212,28 +236,28 @@ export function CreateJobWizard({
       {/* Page 1: Pipeline builder */}
       {page === 1 && (
         <div>
-          <p className="mb-2 text-sm font-medium text-truist-charcoal">Add step</p>
-          <div className="mb-4 flex flex-wrap gap-2">
+          <p className="mb-3 text-sm font-semibold text-truist-charcoal">Add step</p>
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {addableStepTypes.map((type) => (
               <button
                 key={type}
                 onClick={() => addStep(type)}
-                className="rounded-md border border-truist-lightGray px-3 py-2 text-left text-sm hover:bg-truist-tint07"
+                className="rounded-xl border border-truist-gray06 p-4 text-left transition hover:border-truist-purple/40 hover:bg-truist-purple/5"
               >
-                <span className="font-medium text-truist-purple">+ {stepTypeLabels[type]}</span>
-                <span className="ml-2 text-xs text-truist-midGray">{stepTypeHints[type]}</span>
+                <p className="text-sm font-semibold text-truist-charcoal">+ {stepTypeLabels[type]}</p>
+                <p className="mt-1 text-xs text-truist-darkGray">{stepTypeHints[type]}</p>
               </button>
             ))}
           </div>
 
           {steps.length === 0 ? (
-            <div className="rounded-md border border-dashed border-truist-lightGray py-10 text-center text-sm text-truist-midGray">
+            <div className="rounded-xl border border-dashed border-truist-lightGray py-10 text-center text-sm text-truist-midGray">
               No steps yet — add steps above to build your pipeline.
             </div>
           ) : (
             <ol className="space-y-2">
               {steps.map((step, i) => (
-                <li key={step.stepId} className="overflow-hidden rounded-md border border-truist-gray06">
+                <li key={step.stepId} className="overflow-hidden rounded-xl border border-truist-gray06">
                   <div className="flex items-center gap-3 bg-truist-gray07 px-3 py-2">
                     <span className="flex flex-col leading-none">
                       <button
@@ -242,7 +266,7 @@ export function CreateJobWizard({
                         aria-label="Move step up"
                         className="text-truist-midGray hover:text-truist-charcoal disabled:opacity-25"
                       >
-                        ▲
+                        <Chevron dir="up" />
                       </button>
                       <button
                         onClick={() => moveStep(step.stepId, 1)}
@@ -250,10 +274,12 @@ export function CreateJobWizard({
                         aria-label="Move step down"
                         className="text-truist-midGray hover:text-truist-charcoal disabled:opacity-25"
                       >
-                        ▼
+                        <Chevron dir="down" />
                       </button>
                     </span>
-                    <span className="w-5 text-center text-xs text-truist-midGray">{i + 1}</span>
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-truist-purple/20 text-xs font-semibold text-truist-purple">
+                      {i + 1}
+                    </span>
                     <span className="flex-1 text-sm font-medium text-truist-charcoal">
                       {stepTypeLabels[step.type]}
                     </span>
@@ -262,7 +288,7 @@ export function CreateJobWizard({
                       size="sm"
                       onClick={() => setOpenStepId(openStepId === step.stepId ? null : step.stepId)}
                     >
-                      Configure {openStepId === step.stepId ? '▾' : '▸'}
+                      Configure <Chevron dir={openStepId === step.stepId ? 'up' : 'down'} />
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => removeStep(step.stepId)}>
                       Remove
@@ -319,25 +345,26 @@ export function CreateJobWizard({
 
       {/* Page 2: Review */}
       {page === 2 && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-md bg-truist-gray07 p-3">
-              <p className="text-xs font-medium text-truist-midGray">Job name</p>
-              <p className="text-truist-charcoal">{name}</p>
+        <div className="space-y-5">
+          <h3 className="text-sm font-semibold text-truist-charcoal">Review and submit</h3>
+          <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-truist-midGray">Job name</dt>
+              <dd className="mt-1 text-truist-charcoal">{name}</dd>
             </div>
-            <div className="rounded-md bg-truist-gray07 p-3">
-              <p className="text-xs font-medium text-truist-midGray">Approval gate</p>
-              <p className="text-truist-charcoal">{requiresApproval ? 'Yes' : 'No'}</p>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-truist-midGray">Approval gate</dt>
+              <dd className="mt-1 text-truist-charcoal">{requiresApproval ? 'Yes' : 'No'}</dd>
             </div>
-            <div className="col-span-2 rounded-md bg-truist-gray07 p-3">
-              <p className="text-xs font-medium text-truist-midGray">
+            <div className="sm:col-span-2">
+              <dt className="text-xs uppercase tracking-wide text-truist-midGray">
                 Pipeline ({steps.length} step{steps.length !== 1 ? 's' : ''})
-              </p>
-              <p className="text-truist-charcoal">
+              </dt>
+              <dd className="mt-1 text-truist-charcoal">
                 {steps.map((s) => stepTypeLabels[s.type]).join(' → ')}
-              </p>
+              </dd>
             </div>
-          </div>
+          </dl>
 
           {steps.length > 0 && (
             <div>
@@ -354,28 +381,14 @@ export function CreateJobWizard({
         </div>
       )}
 
-      {/* Footer */}
+      {/* Footer — Back left, Next/submit right, same as TMT */}
       <div className="mt-5 flex items-center justify-between border-t border-truist-gray06 pt-4">
         <Button variant="secondary" onClick={() => setPage((p) => p - 1)} disabled={page === 0 || submitting}>
-          ← Back
+          Back
         </Button>
-        <div className="flex items-center gap-1.5" aria-hidden="true">
-          {WIZARD_STEPS.map((_, i) => (
-            <span
-              key={i}
-              className={`h-1.5 w-1.5 rounded-full ${
-                i === page
-                  ? 'bg-truist-purple'
-                  : i < page
-                    ? 'bg-[color:var(--status-passed)]'
-                    : 'bg-truist-lightGray'
-              }`}
-            />
-          ))}
-        </div>
         {page < WIZARD_STEPS.length - 1 ? (
           <Button onClick={() => setPage((p) => p + 1)} disabled={!canAdvance}>
-            Next →
+            Next
           </Button>
         ) : (
           <Button onClick={() => void handleSubmit()} disabled={submitting}>

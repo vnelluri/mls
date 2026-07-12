@@ -133,7 +133,7 @@ def main() -> None:
     tenant = os.environ.get("DEV_USER_TENANT_ID", "acme-capital")
     print()
     print("=" * 72)
-    print("  ML Serving & Monitoring Platform -- local dev")
+    print("  Truist Model Serving (TMS) -- local dev")
     print("=" * 72)
     print(f"  API           → http://localhost:8000")
     print(f"  API docs      → http://localhost:8000/docs")
