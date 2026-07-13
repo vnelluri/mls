@@ -10,6 +10,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    // 3001 (not 3000) so the TMS and TMT dev frontends can run side by side.
+    port: 3001,
   },
 });

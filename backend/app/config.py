@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # moto in dev; unset/None in prod. Use 127.0.0.1 (NOT "localhost") -- on
     # Windows, "localhost" resolves to ::1 first and moto only binds IPv4, so
     # every boto3 request eats a ~2s IPv6 connect stall before falling back.
-    DDB_ENDPOINT_URL: Optional[str] = "http://127.0.0.1:5000"
+    DDB_ENDPOINT_URL: Optional[str] = "http://127.0.0.1:5001"
     AWS_ACCESS_KEY_ID: str = "test"
     AWS_SECRET_ACCESS_KEY: str = "test"
 
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Shared artifacts bucket; every tenant's uploads live under a
     # "{tenant_id}/" prefix. In dev the same moto server that emulates
     # DynamoDB serves S3 (leave unset/empty in prod for real S3).
-    S3_ENDPOINT_URL: Optional[str] = "http://127.0.0.1:5000"
+    S3_ENDPOINT_URL: Optional[str] = "http://127.0.0.1:5001"
     S3_ARTIFACTS_BUCKET: str = "mlserv-artifacts"
 
     # DynamoDB table names
@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     STEP_TIMEOUT_SECONDS: int = 6 * 3600
 
     # ---- CORS --------------------------------------------------------------
-    CORS_ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:3001,http://localhost:5173"
 
     @property
     def cors_origins_list(self) -> List[str]:

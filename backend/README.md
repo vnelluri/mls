@@ -31,9 +31,9 @@ starts a local **moto** server (pure-Python DynamoDB emulator, port 5000),
 creates all 7 tables, seeds demo data, then runs uvicorn on port 8000 with
 `--reload`. Ctrl+C stops both processes.
 
-- API: http://localhost:8000
-- Interactive docs: http://localhost:8000/docs
-- moto (DynamoDB emulator): http://localhost:5000
+- API: http://localhost:8001
+- Interactive docs: http://localhost:8001/docs
+- moto (DynamoDB emulator): http://localhost:5001
 
 > **There is no EMR or Snowflake emulator — by design.** `EMR_MODE=mock`,
 > `SNOWFLAKE_MODE=mock`, and `DQ_MODE=mock` select *pure in-process*
@@ -150,13 +150,13 @@ registration's client ID with `role=Operator`.
 
 ```bash
 # Trigger (idempotent: a retry with the same key returns the original job)
-curl -s -X POST "http://localhost:8000/pipelines/pl-acmefrd01/trigger?tenantId=acme-capital" \
+curl -s -X POST "http://localhost:8001/pipelines/pl-acmefrd01/trigger?tenantId=acme-capital" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: esp-run-0042" \
   -d '{ "externalRunId": "ESP-RUN-0042" }'
 
 # Poll until status is terminal (success / failed / cancelled)
-curl -s "http://localhost:8000/jobs/<jobId>?tenantId=acme-capital"
+curl -s "http://localhost:8001/jobs/<jobId>?tenantId=acme-capital"
 ```
 
 Only **active** pipelines whose model is **in Production** can be triggered
@@ -388,29 +388,29 @@ overrides replace only the *fail* thresholds.
 
 ```bash
 # Who am I?
-curl -s http://localhost:8000/auth/me | jq
+curl -s http://localhost:8001/auth/me | jq
 
 # Pipelines in my tenant
-curl -s "http://localhost:8000/pipelines?page=1&pageSize=10" | jq
+curl -s "http://localhost:8001/pipelines?page=1&pageSize=10" | jq
 
 # Submit a job for a seeded pipeline, then watch it progress (~10s EMR mock)
-JOB=$(curl -s -X POST http://localhost:8000/jobs \
+JOB=$(curl -s -X POST http://localhost:8001/jobs \
   -H 'Content-Type: application/json' \
   -d '{"pipeline_id": "pl-acmefrd01"}' | jq -r .job_id)
-sleep 4;  curl -s http://localhost:8000/jobs/$JOB | jq '.status, [.steps[].status]'
-sleep 8;  curl -s http://localhost:8000/jobs/$JOB | jq '.status, [.steps[].status]'
+sleep 4;  curl -s http://localhost:8001/jobs/$JOB | jq '.status, [.steps[].status]'
+sleep 8;  curl -s http://localhost:8001/jobs/$JOB | jq '.status, [.steps[].status]'
 
 # Approve the seeded awaiting-approval job (as LeadDataScientist @ acme-capital)
-curl -s -X POST http://localhost:8000/jobs/job-acmeappr1/steps/step-4/approve | jq .status
+curl -s -X POST http://localhost:8001/jobs/job-acmeappr1/steps/step-4/approve | jq .status
 
 # Promote a model (Staging -> Production)
-curl -s -X PATCH http://localhost:8000/models/fraud-detector/2/promote \
+curl -s -X PATCH http://localhost:8001/models/fraud-detector/2/promote \
   -H 'Content-Type: application/json' -d '{"targetStage": "Production"}' | jq
 
 # Monitoring + audit
-curl -s http://localhost:8000/monitoring/snapshots | jq '.items[].derivedStatus'
-curl -s http://localhost:8000/monitoring/dashboard | jq
-curl -s "http://localhost:8000/audit?page=1&pageSize=20" | jq '.items[].action'
+curl -s http://localhost:8001/monitoring/snapshots | jq '.items[].derivedStatus'
+curl -s http://localhost:8001/monitoring/dashboard | jq
+curl -s "http://localhost:8001/audit?page=1&pageSize=20" | jq '.items[].action'
 ```
 
 Full smoke test: `bash scripts/test-api.sh` (needs bash, curl, jq).
@@ -446,7 +446,7 @@ See `.env.example` for the complete annotated list. Highlights:
 | `AUTH_MODE` | `dev` | `dev` = synthetic user; `prod` = Entra JWT validation |
 | `GROUP_NAME_PREFIX` | `tms` | prefix of the convention group names (`<prefix>-platform-<role>`, `<prefix>-<tenant>-<role>`) |
 | `DEV_USER_ROLE` / `DEV_USER_TENANT_ID` | `LeadDataScientist` / `acme-capital` | local identity (restart to apply) |
-| `DDB_ENDPOINT_URL` | `http://localhost:5000` | moto in dev; leave empty for real AWS |
+| `DDB_ENDPOINT_URL` | `http://localhost:5001` | moto in dev; leave empty for real AWS |
 | `EMR_MODE` / `SNOWFLAKE_MODE` / `DQ_MODE` | `mock` | in-process simulations; `real` = EMR Serverless / live Snowflake unloads / S3-parquet DQ engine (see "Real execution modes") |
 | `EMR_ENTRYPOINT_S3_URI` | empty | platform-wide default scoring entrypoint (per-tenant override via execution config) |
 | `SNOWFLAKE_ACCOUNT/USER/PRIVATE_KEY/STORAGE_INTEGRATION` | empty | required when `SNOWFLAKE_MODE=real` (startup-validated) |
@@ -456,7 +456,7 @@ See `.env.example` for the complete annotated list. Highlights:
 | `JOB_REFRESH_INTERVAL_SECONDS` | `30` | background EMR poll cadence |
 | `STEP_DURATION_SECONDS` | `30` | mock-mode step runtime (data_quality_check timer; mock data_pipeline query duration) |
 | `STEP_TIMEOUT_SECONDS` | `21600` | per-step runtime ceiling — a step past it is failed and its EMR run cancelled |
-| `CORS_ALLOWED_ORIGINS` | localhost:3000,localhost:5173 | comma-separated |
+| `CORS_ALLOWED_ORIGINS` | localhost:3001,localhost:5173 | comma-separated |
 
 ## Troubleshooting
 

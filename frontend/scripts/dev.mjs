@@ -63,7 +63,7 @@ async function waitForBackend(healthUrl, timeoutMs) {
 async function main() {
   ensureEnvFile();
 
-  const apiBaseUrl = readEnvValue('VITE_API_BASE_URL', 'http://localhost:8000');
+  const apiBaseUrl = readEnvValue('VITE_API_BASE_URL', 'http://localhost:8001');
   const healthUrl = `${apiBaseUrl.replace(/\/$/, '')}/health`;
 
   console.log(`[dev] Checking backend health at ${healthUrl} …`);

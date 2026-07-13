@@ -21,7 +21,7 @@ npm run dev
    against a backend that isn't there:
 
    ```
-   Can't reach the backend at http://localhost:8000/health — start the backend first:
+   Can't reach the backend at http://localhost:8001/health — start the backend first:
    cd ../backend && python scripts/dev.py — then re-run this script.
    ```
 
@@ -55,7 +55,7 @@ See `.env.example`:
 
 | Variable | Purpose |
 |---|---|
-| `VITE_API_BASE_URL` | Backend base URL. Defaults to `http://localhost:8000`. |
+| `VITE_API_BASE_URL` | Backend base URL. Defaults to `http://localhost:8001`. |
 | `VITE_DEMO_MODE` | `true` shows a cosmetic role selector on the login page instead of the Microsoft sign-in button. Local dev only. |
 | `VITE_ENTRA_TENANT_ID` | Entra ID (Azure AD) tenant ID, used to build the MSAL authority URL. Production only. |
 | `VITE_ENTRA_CLIENT_ID` | Entra ID app registration client ID. Production only. |
@@ -218,7 +218,7 @@ docker run -p 8080:80 ml-serving-monitoring-frontend
 
 The `--build-arg` values above are baked into the JS bundle at build time (see
 "Environment variables" above) — omitting them ships an image whose API calls
-fall back to `http://localhost:8000` and whose MSAL config has no client ID.
+fall back to `http://localhost:8001` and whose MSAL config has no client ID.
 
 Multi-stage build: `node:20-alpine` builds the static bundle, `nginx:alpine` serves it on port 80
 with SPA-fallback routing (`nginx.conf`). Port 80 was chosen (rather than 3000) to match a typical

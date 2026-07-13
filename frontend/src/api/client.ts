@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance } from 'axios';
 
 const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000';
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8001';
 
 const DEMO_MODE: boolean = (import.meta.env.VITE_DEMO_MODE as string | undefined) === 'true';
 

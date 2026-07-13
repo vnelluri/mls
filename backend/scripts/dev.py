@@ -34,7 +34,9 @@ for s in (sys.stdout, sys.stderr):
         s.reconfigure(encoding="utf-8", errors="replace")
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-MOTO_PORT = 5000
+# Offset ports (moto 5001, API 8001, frontend 3001) so TMS and TMT dev
+# stacks can run side by side.
+MOTO_PORT = 5001
 MOTO_URL = f"http://127.0.0.1:{MOTO_PORT}/"
 
 _moto_proc = None
@@ -135,8 +137,8 @@ def main() -> None:
     print("=" * 72)
     print("  Truist Model Serving (TMS) -- local dev")
     print("=" * 72)
-    print(f"  API           → http://localhost:8000")
-    print(f"  API docs      → http://localhost:8000/docs")
+    print(f"  API           → http://localhost:8001")
+    print(f"  API docs      → http://localhost:8001/docs")
     print(f"  moto (DDB)    → {MOTO_URL}")
     print(f"  Dev identity  → role={role} tenant={tenant}")
     print()
@@ -154,7 +156,7 @@ def main() -> None:
         subprocess.run(
             [
                 sys.executable, "-m", "uvicorn", "app.main:app",
-                "--reload", "--host", "0.0.0.0", "--port", "8000",
+                "--reload", "--host", "0.0.0.0", "--port", "8001",
             ],
             env=_child_env(),
             cwd=str(BACKEND_DIR),
