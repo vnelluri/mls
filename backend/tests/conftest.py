@@ -60,12 +60,15 @@ def aws():
     with mock_aws():
         db_client.get_dynamodb_resource.cache_clear()
         db_client.get_dynamodb_client.cache_clear()
-        artifact_service.get_s3_client.cache_clear()
+        db_client.get_s3_client.cache_clear()
+        # Each test's moto starts without the bucket -- re-arm the create.
+        artifact_service._ensure_bucket_once.cache_clear()
         create_tables.main()
         yield
     db_client.get_dynamodb_resource.cache_clear()
     db_client.get_dynamodb_client.cache_clear()
-    artifact_service.get_s3_client.cache_clear()
+    db_client.get_s3_client.cache_clear()
+    artifact_service._ensure_bucket_once.cache_clear()
 
 
 @pytest.fixture()

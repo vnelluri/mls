@@ -65,9 +65,11 @@ class EmrExecutionService(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def get_application(self, application_id: str) -> dict:
-        """EMR Serverless application ("cluster") stats:
-        {"state": str, "max_cpu": str, "max_memory": str}."""
+    def application_id_for_tenant(self, tenant_id: str, execution: dict) -> Optional[str]:
+        """The EMR application to report for a tenant, or None to skip it.
+        Keeps mock-vs-real semantics (the mock synthesizes one application
+        per tenant) inside the execution layer instead of leaking EMR_MODE
+        checks into consumers like the dashboard aggregator."""
         ...
 
 
@@ -115,7 +117,12 @@ class MockEmrExecutionService(EmrExecutionService):
     def get_application(self, application_id: str) -> dict:
         # ponytail: static STARTED + EMR Serverless default limits; live usage
         # metrics would need CloudWatch even in real mode.
-        return {"state": "STARTED", "max_cpu": "400 vCPU", "max_memory": "3000 GB", "max_vcpu": 400}
+        return {"state": "STARTED", "max_cpu": "400 vCPU", "max_memory": "3000 GB"}
+
+    def application_id_for_tenant(self, tenant_id: str, execution: dict) -> Optional[str]:
+        # Tenants rarely carry a real emrApplicationId in mock mode --
+        # synthesize one per tenant so every tenant gets a dashboard row.
+        return execution.get("emrApplicationId") or f"mock-emr-{tenant_id}"
 
 
 class RealEmrExecutionService(EmrExecutionService):
@@ -176,6 +183,10 @@ class RealEmrExecutionService(EmrExecutionService):
             "max_cpu": cap.get("cpu", ""),
             "max_memory": cap.get("memory", ""),
         }
+
+    def application_id_for_tenant(self, tenant_id: str, execution: dict) -> Optional[str]:
+        # Only tenants with a configured application appear on the dashboard.
+        return execution.get("emrApplicationId") or None
 
 
 def get_emr_execution_service() -> EmrExecutionService:

@@ -6,35 +6,23 @@ file into `settings.S3_ARTIFACTS_BUCKET` and hands back the URI to register
 with. Every tenant's uploads live under a "{tenant_id}/" key prefix -- the
 same isolation convention the per-tenant EMR execution roles' S3 grants are
 scoped to.
-
-Endpoint-url aware like the DynamoDB client factory: with `S3_ENDPOINT_URL`
-set (local dev -> the same moto server that emulates DynamoDB) boto3 is
-pointed at it; in prod leave it unset/empty for real S3 via the task role.
 """
 import re
 import uuid
 from functools import lru_cache
 from typing import BinaryIO
 
-import boto3
 from botocore.exceptions import ClientError
 
 from app.config import settings
+from app.db.client import get_s3_client
 from app.schemas.common import CurrentUser
 from app.services import audit_service
 
 _FILENAME_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
-
-@lru_cache(maxsize=1)
-def get_s3_client():
-    kwargs = {"region_name": settings.AWS_REGION}
-    if settings.S3_ENDPOINT_URL:
-        kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
-        # moto ignores real credentials but boto3 requires *some* value
-        kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID or "test"
-        kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY or "test"
-    return boto3.client("s3", **kwargs)
+# create_bucket races and re-runs resolve to "it exists now" -- fine.
+_BUCKET_EXISTS_ERRORS = ("BucketAlreadyOwnedByYou", "BucketAlreadyExists", "OperationAborted")
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -46,12 +34,16 @@ def _sanitize_filename(filename: str) -> str:
     return name or "artifact"
 
 
-def _ensure_bucket(s3) -> None:
-    """Create the artifacts bucket if it doesn't exist yet. In dev the moto
-    server starts empty every run, so first upload creates it; in prod the
-    bucket is provisioned out-of-band and head_bucket just succeeds (the task
-    role has no s3:CreateBucket, so a missing prod bucket fails loudly here
-    instead of half-working)."""
+@lru_cache(maxsize=1)
+def _ensure_bucket_once() -> None:
+    """Create the artifacts bucket if it doesn't exist yet -- once per
+    process (lru_cache), not per upload. In dev the moto server starts empty
+    every run, so the first upload creates it; in prod the bucket is
+    provisioned out-of-band and head_bucket just succeeds (the task role has
+    no s3:CreateBucket, so a missing prod bucket fails loudly here instead
+    of half-working). Concurrent first uploads can race the create -- any
+    "already exists" outcome is success."""
+    s3 = get_s3_client()
     bucket = settings.S3_ARTIFACTS_BUCKET
     try:
         s3.head_bucket(Bucket=bucket)
@@ -63,7 +55,11 @@ def _ensure_bucket(s3) -> None:
     # us-east-1 is the one region create_bucket rejects a LocationConstraint for
     if settings.AWS_REGION != "us-east-1":
         kwargs["CreateBucketConfiguration"] = {"LocationConstraint": settings.AWS_REGION}
-    s3.create_bucket(**kwargs)
+    try:
+        s3.create_bucket(**kwargs)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in _BUCKET_EXISTS_ERRORS:
+            raise
 
 
 def upload_artifact(current_user: CurrentUser, filename: str, fileobj: BinaryIO) -> dict:
@@ -74,10 +70,13 @@ def upload_artifact(current_user: CurrentUser, filename: str, fileobj: BinaryIO)
     key = f"{current_user.tenant_id}/uploads/{uuid.uuid4().hex[:12]}/{safe_name}"
     bucket = settings.S3_ARTIFACTS_BUCKET
 
-    s3 = get_s3_client()
-    _ensure_bucket(s3)
-    s3.upload_fileobj(fileobj, bucket, key)
-    size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
+    # Size from the spooled upload itself -- no S3 round-trip needed.
+    fileobj.seek(0, 2)
+    size = fileobj.tell()
+    fileobj.seek(0)
+
+    _ensure_bucket_once()
+    get_s3_client().upload_fileobj(fileobj, bucket, key)
 
     uri = f"s3://{bucket}/{key}"
     audit_service.write_event(

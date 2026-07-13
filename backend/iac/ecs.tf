@@ -7,6 +7,7 @@ locals {
     AUTH_MODE                  = "prod"
     AWS_REGION                 = var.aws_region
     DDB_ENDPOINT_URL           = "" # empty -> real DynamoDB via the task role
+    S3_ENDPOINT_URL            = "" # empty -> real S3 (the app default points at local moto)
     EMR_MODE                   = var.emr_mode
     SNOWFLAKE_MODE             = var.snowflake_mode
     DQ_MODE                    = var.dq_mode
@@ -20,7 +21,14 @@ locals {
     TABLE_AUDIT                = aws_dynamodb_table.this["audit"].name
   }
 
-  environment = merge(local.base_environment, var.extra_environment)
+  # artifacts_bucket_name must reach the app as S3_ARTIFACTS_BUCKET too --
+  # the IAM grant (iam.tf) and the bucket the app uploads to have to agree.
+  # Empty = keep the app's default rather than overriding it with "".
+  environment = merge(
+    local.base_environment,
+    var.artifacts_bucket_name != "" ? { S3_ARTIFACTS_BUCKET = var.artifacts_bucket_name } : {},
+    var.extra_environment,
+  )
 }
 
 resource "aws_ecs_cluster" "this" {

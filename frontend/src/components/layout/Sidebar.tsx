@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useTenantContext } from '@/auth/useTenantContext';
+import { StrokeIcon } from '@/components/shared/ui';
 
 interface NavItem {
   to: string;
@@ -7,11 +8,7 @@ interface NavItem {
   icon: JSX.Element;
 }
 
-const icon = (d: string) => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
-    <path d={d} strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
+const icon = (d: string) => <StrokeIcon d={d} />;
 
 // Same 18px / 1.75-stroke icon language as TMT's sidebar.
 const ICONS = {

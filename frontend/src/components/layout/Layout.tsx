@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { Copyright } from '@/components/shared/ui';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
@@ -17,7 +18,7 @@ export function Layout() {
         </main>
       </div>
       <footer className="flex h-9 shrink-0 items-center justify-center border-t border-truist-gray06 bg-white text-xs text-truist-midGray">
-        © {new Date().getFullYear()} Truist Financial Corporation. All rights reserved.
+        <Copyright suffix="All rights reserved." />
       </footer>
     </div>
   );

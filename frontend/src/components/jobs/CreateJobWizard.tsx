@@ -11,7 +11,7 @@ import type {
   PipelineStep,
   StepType,
 } from '@/types/platform';
-import { Button, Field, InlineAlert, Input, Modal, Textarea } from '@/components/shared/ui';
+import { Button, Field, InlineAlert, Input, Modal, StrokeIcon, Textarea } from '@/components/shared/ui';
 import { PipelineCanvas, stepsToCanvasSteps } from '@/components/canvas/PipelineCanvas';
 import { stepTypeLabels } from '@/components/canvas/StepNode';
 import { DataPipelineStepPanel } from '@/components/canvas/panels/DataPipelineStepPanel';
@@ -70,18 +70,7 @@ function newStepId(): string {
 
 function Chevron({ dir }: { dir: 'up' | 'down' }) {
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true"
-      className={dir === 'up' ? 'rotate-180' : ''}
-    >
-      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <StrokeIcon d="M6 9l6 6 6-6" size={14} strokeWidth={2} className={dir === 'up' ? 'rotate-180' : ''} />
   );
 }
 

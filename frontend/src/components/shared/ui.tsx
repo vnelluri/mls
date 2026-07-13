@@ -34,6 +34,49 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = 'Button';
 
 // ---------------------------------------------------------------------------
+// StrokeIcon — the one inline-SVG icon scaffold (24 viewBox, currentColor
+// stroke). Nav icons, chevrons, and close buttons all pass a path + size
+// instead of repeating the boilerplate.
+// ---------------------------------------------------------------------------
+export function StrokeIcon({
+  d,
+  size = 18,
+  strokeWidth = 1.75,
+  className,
+}: {
+  d: string;
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      aria-hidden="true"
+      className={className}
+    >
+      <path d={d} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Copyright — the legal footer line (layout footer, login hero).
+// ---------------------------------------------------------------------------
+export function Copyright({ suffix, className }: { suffix: string; className?: string }) {
+  return (
+    <p className={className}>
+      © {new Date().getFullYear()} Truist Financial Corporation. {suffix}
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Card
 // ---------------------------------------------------------------------------
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -132,9 +175,7 @@ export function Modal({
             onClick={onClose}
             className="rounded-lg p-1 text-truist-darkGray transition hover:bg-truist-tint07 hover:text-truist-charcoal"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
+            <StrokeIcon d="M6 6l12 12M18 6L6 18" size={20} strokeWidth={1.5} />
           </button>
         </div>
         {children}

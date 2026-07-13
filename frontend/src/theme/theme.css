@@ -1,5 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
+/* No external font loading: this is an internal app, so Inter/JetBrains
+ * Mono are used when locally installed and the stacks fall back to
+ * system-ui / ui-monospace otherwise — no render-blocking request to (or
+ * traffic toward) a third-party CDN. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -43,11 +45,14 @@ a {
   color: var(--truist-purple, #6c63c5);
 }
 
-/* Grid pattern used on the login left panel (same as TMT) */
+/* Grid pattern used on the login left panel (same as TMT). Line color is
+ * the dawn token at 8% alpha, derived from the CSS var so a palette change
+ * in tokens.ts reaches it. */
 .login-grid-pattern {
+  --login-grid-line: color-mix(in srgb, var(--truist-dawn, #a6a3e0) 8%, transparent);
   background-image:
-    linear-gradient(rgba(166, 163, 224, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(166, 163, 224, 0.08) 1px, transparent 1px);
+    linear-gradient(var(--login-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--login-grid-line) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 

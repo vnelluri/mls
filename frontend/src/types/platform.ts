@@ -306,8 +306,9 @@ export interface JobStats {
 }
 
 /** One tenant's EMR Serverless application ("cluster"): state, capacity,
- * run counts, and an ESTIMATED utilization (derived from run counts, not
- * CloudWatch — hence `estimated`) for the dashboard's capacity meter. */
+ * run counts, and utilization for the dashboard's capacity meter. The
+ * utilization is always an ESTIMATE derived from run counts (real worker
+ * metrics would need CloudWatch), which the UI labels as such. */
 export interface EmrApplication {
   tenantId: string;
   applicationId: string;
@@ -319,7 +320,6 @@ export interface EmrApplication {
   maxVcpu: number | null;
   allocatedVcpuEstimate: number;
   utilizationPct: number | null;
-  estimated: boolean;
 }
 
 /** execute_model (EMR) steps across visible jobs, bucketed by step status —

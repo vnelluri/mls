@@ -1,9 +1,9 @@
 """
-Boto3 DynamoDB resource/client factory.
+Boto3 AWS client factories (DynamoDB resource/client + S3 client).
 
-Endpoint-url aware: when `DDB_ENDPOINT_URL` is set (local dev -> moto server),
-boto3 is pointed at it. In prod, leave `DDB_ENDPOINT_URL` unset/empty and
-boto3 will talk to real AWS DynamoDB using the ambient credentials/role.
+Endpoint-url aware: when `DDB_ENDPOINT_URL` / `S3_ENDPOINT_URL` is set (local
+dev -> moto server), boto3 is pointed at it. In prod, leave them unset/empty
+and boto3 talks to real AWS using the ambient credentials/role.
 
 `get_table` returns a thin wrapper that converts Python floats to Decimal on
 write (boto3's serializer raises TypeError on raw floats -- and the mock
@@ -98,6 +98,16 @@ def get_dynamodb_client():
         kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID or "test"
         kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY or "test"
     return boto3.client("dynamodb", **kwargs)
+
+
+@lru_cache(maxsize=1)
+def get_s3_client():
+    kwargs = {"region_name": settings.AWS_REGION}
+    if settings.S3_ENDPOINT_URL:
+        kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
+        kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID or "test"
+        kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY or "test"
+    return boto3.client("s3", **kwargs)
 
 
 def get_table(table_name: str) -> _TableWrapper:

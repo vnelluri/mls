@@ -18,6 +18,8 @@
 export const truistColors = {
   purple: '#6c63c5',
   valhalla: '#2e1a47',
+  // Deep end of the login-hero gradient (darker than valhalla).
+  valhallaDeep: '#1a0f2e',
   white: '#ffffff',
   dusk: '#5b53b0',
   dawn: '#a6a3e0',

@@ -12,7 +12,11 @@ const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
 /** "5m ago" / "in 2h" — pair with the absolute datetime (e.g. as a title attribute) so exact time is one hover away. */
 export function formatRelativeTime(iso: string): string {
-  const diffSec = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  const ms = new Date(iso).getTime();
+  // rtf.format(NaN) throws RangeError — degrade to the raw value instead of
+  // letting one malformed timestamp crash the whole page render.
+  if (Number.isNaN(ms)) return iso;
+  const diffSec = Math.round((ms - Date.now()) / 1000);
   const absSec = Math.abs(diffSec);
   for (const [unit, secInUnit] of UNITS) {
     if (absSec >= secInUnit || unit === 'second') {

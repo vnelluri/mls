@@ -12,6 +12,7 @@ export default {
         truist: {
           purple: truistColors.purple,
           valhalla: truistColors.valhalla,
+          valhallaDeep: truistColors.valhallaDeep,
           white: truistColors.white,
           dusk: truistColors.dusk,
           dawn: truistColors.dawn,

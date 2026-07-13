@@ -17,9 +17,9 @@ class JobStats(ApiModel):
 
 class EmrApplication(ApiModel):
     """One tenant's EMR Serverless application ("cluster"): state, capacity
-    limits, run counts, and an ESTIMATED utilization for the dashboard's
-    capacity meter (derived from run counts, not CloudWatch — hence
-    `estimated`)."""
+    limits, run counts, and utilization for the dashboard's capacity meter.
+    Utilization is always an ESTIMATE derived from run counts (real worker
+    metrics would need CloudWatch), which the frontend labels as such."""
 
     tenant_id: str
     application_id: str
@@ -31,7 +31,6 @@ class EmrApplication(ApiModel):
     max_vcpu: Optional[int] = None
     allocated_vcpu_estimate: int
     utilization_pct: Optional[int] = None
-    estimated: bool = True
 
 
 class EmrStats(ApiModel):

@@ -258,7 +258,7 @@ export function JobsListPage() {
             role="tab"
             aria-selected={statusFilter === f.value}
             onClick={() => handleStatusFilterChange(f.value)}
-            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-truist-skyBlue ${
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-truist-skyBlue focus-visible:ring-offset-1 ${
               statusFilter === f.value
                 ? 'border-truist-purple bg-truist-purple text-white'
                 : 'border-truist-lightGray bg-white text-truist-darkGray hover:bg-truist-tint07'

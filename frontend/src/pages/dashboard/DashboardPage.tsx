@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { getDashboardSummary } from '@/api/dashboardApi';
 import { uploadArtifact, type ArtifactUploadResult } from '@/api/modelsApi';
+import { copyToClipboard } from '@/lib/clipboard';
 import { useTenantContext } from '@/auth/useTenantContext';
 import { EmrAppStateBadge, JobStatusBadge, MonitoringStatusBadge } from '@/components/StatusBadge';
 import { Button, Card, InlineAlert } from '@/components/shared/ui';
@@ -79,8 +80,7 @@ function EmrCapacityMeter({ app }: { app: EmrApplication }) {
         <span className="text-truist-darkGray">
           Capacity{' '}
           <span className="text-truist-midGray">
-            ({app.allocatedVcpuEstimate} / {app.maxVcpu ?? '—'} vCPU
-            {app.estimated ? ', estimated' : ''})
+            ({app.allocatedVcpuEstimate} / {app.maxVcpu ?? '—'} vCPU, estimated)
           </span>
         </span>
         <span className="font-mono text-truist-charcoal">{pct !== null ? `${pct}%` : '—'}</span>
@@ -207,8 +207,10 @@ function ArtifactUploadCard() {
             variant="secondary"
             size="sm"
             onClick={() => {
-              void navigator.clipboard.writeText(result.artifactS3Uri);
-              setCopied(true);
+              void copyToClipboard(result.artifactS3Uri).then((ok) => {
+                setCopied(ok);
+                if (!ok) setError('Could not copy to the clipboard — select the URI and copy it manually.');
+              });
             }}
           >
             {copied ? 'Copied' : 'Copy'}
@@ -243,28 +245,30 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (isCancelled: () => boolean = () => false) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const summary = await getDashboardSummary();
-      if (!isCancelled()) setData(summary);
-    } catch (err) {
-      if (!isCancelled()) {
-        setError(err instanceof Error ? err.message : 'Failed to load dashboard data.');
-      }
-    } finally {
-      if (!isCancelled()) setLoading(false);
-    }
-  }, []);
+  // Retry just bumps the key; the effect owns the fetch and its own
+  // cancellation, so every load path is guarded the same way.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    void load(() => cancelled);
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const summary = await getDashboardSummary();
+        if (!cancelled) setData(summary);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load dashboard data.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [refreshKey]);
 
   return (
     <div>
@@ -280,7 +284,7 @@ export function DashboardPage() {
         {canSubmitJob && (
           <Link
             to="/jobs"
-            className="rounded-md bg-truist-purple px-4 py-2 text-sm font-medium text-white hover:bg-truist-dusk focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-truist-skyBlue"
+            className="rounded-md bg-truist-purple px-4 py-2 text-sm font-medium text-white hover:bg-truist-dusk focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-truist-skyBlue focus-visible:ring-offset-1"
           >
             Create New Job
           </Link>
@@ -292,7 +296,7 @@ export function DashboardPage() {
           <div className="flex-1">
             <InlineAlert kind="error">{error}</InlineAlert>
           </div>
-          <Button variant="secondary" size="sm" disabled={loading} onClick={() => void load()}>
+          <Button variant="secondary" size="sm" disabled={loading} onClick={() => setRefreshKey((k) => k + 1)}>
             Retry
           </Button>
         </div>
@@ -329,26 +333,33 @@ export function DashboardPage() {
               />
             </Card>
             <Card>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <img src="/emr.svg" alt="" className="h-4 w-4" />
-                  <h2 className="text-sm font-semibold text-truist-charcoal">EMR compute</h2>
-                </div>
-                {data.emr.applications.length === 1 && (
-                  <EmrAppStateBadge state={data.emr.applications[0].state} />
-                )}
-              </div>
-              {data.emr.applications.length === 0 ? (
-                <p className="text-sm text-truist-darkGray">No EMR applications.</p>
-              ) : data.emr.applications.length === 1 ? (
-                <EmrApplicationPanel app={data.emr.applications[0]} />
-              ) : (
-                <ul className="divide-y divide-truist-gray06 [&>li]:py-3 [&>li:first-child]:pt-0 [&>li:last-child]:pb-0">
-                  {data.emr.applications.map((app) => (
-                    <EmrApplicationRow key={app.applicationId} app={app} />
-                  ))}
-                </ul>
-              )}
+              {/* Guarded: a backend still serving the pre-emr summary shape
+                  (rolling deploy) degrades to the empty card, not a crash. */}
+              {(() => {
+                const emrApps = data.emr?.applications ?? [];
+                return (
+                  <>
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <img src="/emr.svg" alt="" className="h-4 w-4" />
+                        <h2 className="text-sm font-semibold text-truist-charcoal">EMR compute</h2>
+                      </div>
+                      {emrApps.length === 1 && <EmrAppStateBadge state={emrApps[0].state} />}
+                    </div>
+                    {emrApps.length === 0 ? (
+                      <p className="text-sm text-truist-darkGray">No EMR applications.</p>
+                    ) : emrApps.length === 1 ? (
+                      <EmrApplicationPanel app={emrApps[0]} />
+                    ) : (
+                      <ul className="divide-y divide-truist-gray06 [&>li]:py-3 [&>li:first-child]:pt-0 [&>li:last-child]:pb-0">
+                        {emrApps.map((app) => (
+                          <EmrApplicationRow key={app.applicationId} app={app} />
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                );
+              })()}
             </Card>
             <Card>
               <h2 className="mb-3 text-sm font-semibold text-truist-charcoal">

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
-import { Button, InlineAlert } from '@/components/shared/ui';
+import { Button, Copyright, InlineAlert } from '@/components/shared/ui';
 import type { Role } from '@/types/platform';
 
 const roleOptions: { role: Role; label: string; description: string }[] = [
@@ -46,7 +46,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen bg-truist-tint08">
       {/* Left panel — branded hero, stays valhalla-dark (same as TMT) */}
-      <div className="login-grid-pattern relative hidden w-1/2 flex-col justify-between overflow-hidden bg-truist-valhalla bg-gradient-to-br from-truist-valhalla via-truist-valhalla to-[#1a0f2e] p-12 lg:flex">
+      <div className="login-grid-pattern relative hidden w-1/2 flex-col justify-between overflow-hidden bg-truist-valhalla bg-gradient-to-br from-truist-valhalla via-truist-valhalla to-truist-valhallaDeep p-12 lg:flex">
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
         <div className="relative z-10 flex items-center gap-3">
           <img src="/truist-logo1.svg" alt="Truist" className="logo-invert h-10 w-10" />
@@ -61,9 +61,7 @@ export function LoginPage() {
             business unit — with tenancy and access derived directly from Entra ID.
           </p>
         </div>
-        <p className="relative z-10 text-xs text-white/40">
-          © {new Date().getFullYear()} Truist Financial Corporation. Internal use only.
-        </p>
+        <Copyright suffix="Internal use only." className="relative z-10 text-xs text-white/40" />
       </div>
 
       {/* Right panel — sign-in form */}

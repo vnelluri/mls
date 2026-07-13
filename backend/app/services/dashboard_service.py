@@ -6,20 +6,27 @@ LeadDataScientist/DataScientist, ALL-GSI Query for PlatformAdmin) and folds
 the results into a single summary payload so the dashboard page renders from
 one round-trip instead of fanning out per-status list calls.
 """
+import logging
 import re
-from typing import List, Optional
+from typing import List, Optional, get_args
 
-from app.config import settings
 from app.repositories import audit_repo, tenant_repo
 from app.schemas.common import CurrentUser
+from app.schemas.job import JobStatus, StepRunStatus
+from app.schemas.model_registry import ModelStage, MonitoringStatus
+from app.schemas.pipeline import PipelineStatus
 from app.services import job_service, model_registry_service, pipeline_service
 from app.services.emr_execution_service import get_emr_execution_service
 
-PIPELINE_STATUSES = ["draft", "active", "archived"]
-JOB_STATUSES = ["pending", "running", "awaiting_approval", "success", "failed", "cancelled"]
-STEP_STATUSES = ["idle", "running", "succeeded", "failed", "awaiting_approval", "approved", "rejected"]
-MODEL_STAGES = ["None", "Staging", "Production", "Archived"]
-MONITORING_STATUSES = ["Passed", "Failed", "Rework", "InReview", "NotStarted"]
+logger = logging.getLogger(__name__)
+
+# Derived from the schema Literals so a new status can never silently miss
+# its dashboard bucket.
+PIPELINE_STATUSES = list(get_args(PipelineStatus))
+JOB_STATUSES = list(get_args(JobStatus))
+STEP_STATUSES = list(get_args(StepRunStatus))
+MODEL_STAGES = list(get_args(ModelStage))
+MONITORING_STATUSES = list(get_args(MonitoringStatus))
 
 RECENT_LIMIT = 5
 
@@ -70,7 +77,9 @@ def _emr_applications(current_user: CurrentUser, jobs: List[dict]) -> List[dict]
             if s.get("status") == "running":
                 running_by_tenant[job["tenant_id"]] = running_by_tenant.get(job["tenant_id"], 0) + 1
             # An idle EMR step on a still-active job is queued to run; idle
-            # steps on terminal jobs never will be.
+            # steps on terminal jobs never will be. awaiting_approval can't
+            # hold an idle execute_model step: the enforced step order puts
+            # approval gates after execute_model.
             elif s.get("status") == "idle" and job.get("status") in ("pending", "running"):
                 queued_by_tenant[job["tenant_id"]] = queued_by_tenant.get(job["tenant_id"], 0) + 1
 
@@ -79,13 +88,22 @@ def _emr_applications(current_user: CurrentUser, jobs: List[dict]) -> List[dict]
     svc = get_emr_execution_service()
     apps = []
     for tenant_id, execution in tenants:
-        app_id = execution.get("emrApplicationId")
+        app_id = svc.application_id_for_tenant(tenant_id, execution)
         if not app_id:
-            if settings.EMR_MODE == "real":
-                continue
-            app_id = f"mock-emr-{tenant_id}"
-        info = svc.get_application(app_id)
-        max_vcpu = info.pop("max_vcpu", None) or _parse_vcpu(info.get("max_cpu"))
+            continue
+        try:
+            info = svc.get_application(app_id)
+        except Exception:
+            # One deleted/throttled application must not blank the whole
+            # dashboard (for admins, every tenant's) -- degrade to omitting
+            # that tenant's row.
+            logger.warning(
+                "get_application failed for tenant %s (application %s) -- "
+                "omitting it from the dashboard EMR panel",
+                tenant_id, app_id, exc_info=True,
+            )
+            continue
+        max_vcpu = _parse_vcpu(info.get("max_cpu"))
         running = running_by_tenant.get(tenant_id, 0)
         allocated = running * _EST_VCPU_PER_WORKER
         apps.append({
@@ -97,7 +115,6 @@ def _emr_applications(current_user: CurrentUser, jobs: List[dict]) -> List[dict]
             "max_vcpu": max_vcpu,
             "allocated_vcpu_estimate": allocated,
             "utilization_pct": min(100, round(allocated / max_vcpu * 100)) if max_vcpu else None,
-            "estimated": True,
         })
     return apps
 
