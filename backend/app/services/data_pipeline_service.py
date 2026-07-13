@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.config import settings
+from app.services import snowflake_connection
 
 logger = logging.getLogger(__name__)
 
@@ -177,48 +178,13 @@ class RealDataPipelineService(DataPipelineService):
     """Live Snowflake -> S3 extraction via an asynchronous COPY INTO."""
 
     def _connect(self, step_config: Optional[dict] = None):
-        import snowflake.connector
-
-        kwargs = {
-            "account": settings.SNOWFLAKE_ACCOUNT,
-            "user": settings.SNOWFLAKE_USER,
-            # The platform polls/cancels queries it started; nothing here
-            # needs an interactive session.
-            "client_session_keep_alive": False,
-            # Bounds a hung connect/poll so it can't stall the shared refresh
-            # loop (or a synchronous GET /jobs/{id} request) indefinitely.
-            "login_timeout": settings.SNOWFLAKE_LOGIN_TIMEOUT_SECONDS,
-            "network_timeout": settings.SNOWFLAKE_NETWORK_TIMEOUT_SECONDS,
-        }
-        if settings.SNOWFLAKE_ROLE:
-            kwargs["role"] = settings.SNOWFLAKE_ROLE
+        warehouse = None
         if step_config:
             params = step_config.get("snowflakeParams") or {}
-            kwargs["warehouse"] = _require_identifier(
+            warehouse = _require_identifier(
                 params.get("warehouse"), "snowflakeParams.warehouse"
             )
-        if settings.SNOWFLAKE_PRIVATE_KEY:
-            kwargs["private_key"] = self._private_key_der()
-        else:
-            kwargs["password"] = settings.SNOWFLAKE_PASSWORD
-        return snowflake.connector.connect(**kwargs)
-
-    @staticmethod
-    def _private_key_der() -> bytes:
-        """Key-pair auth (the standard for service accounts): the PEM arrives
-        via SSM SecureString -> env var; the connector wants DER."""
-        from cryptography.hazmat.primitives import serialization
-
-        passphrase = settings.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE or None
-        key = serialization.load_pem_private_key(
-            settings.SNOWFLAKE_PRIVATE_KEY.encode("utf-8"),
-            password=passphrase.encode("utf-8") if passphrase else None,
-        )
-        return key.private_bytes(
-            encoding=serialization.Encoding.DER,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
+        return snowflake_connection.connect(warehouse=warehouse)
 
     def start(self, step_config: dict) -> dict:
         sql = build_unload_sql(step_config)
